@@ -1,0 +1,72 @@
+// Domain events published by backup-svc.
+//
+// Delivery, as for git.v1 and ci.v1:
+//   - backup-svc writes each event to its outbox table (backup_svc.outbox)
+//     in the same database transaction as the change it describes.
+//   - Events are delivered at least once. Consumers must handle repeats,
+//     using the outbox row's event_id (a random UUID per event), which the
+//     relay delivers next to the payload. The outbox columns are the same
+//     as git_svc.outbox (git2-codeplane ADR 0007).
+//   - The event type is the full message name, for example
+//     "backup.v1.SnapshotFinished". The payload is the message in the
+//     canonical protobuf JSON encoding.
+syntax = "proto3";
+
+package backup.v1;
+
+import "backup/v1/backup.proto";
+import "google/protobuf/timestamp.proto";
+
+// SnapshotFinished is published when a snapshot succeeds or fails.
+message SnapshotFinished {
+  // ID of the snapshot.
+  string snapshot_id = 1;
+
+  // STATE_SUCCEEDED or STATE_FAILED.
+  Snapshot.State state = 2;
+
+  // What started the snapshot.
+  Snapshot.Trigger trigger = 3;
+
+  // ID of the admin who asked for it. Empty for scheduled snapshots.
+  string requested_by_user_id = 4;
+
+  // Size of the encrypted archive. 0 when it failed.
+  int64 size_bytes = 5;
+
+  // Why it failed. Empty when it succeeded. Same rules as
+  // Snapshot.failure_reason.
+  string failure_reason = 6;
+
+  // When the snapshot finished. Equal to Snapshot.finished_at.
+  google.protobuf.Timestamp occurred_at = 7;
+}
+
+// SnapshotDeleted is published when a snapshot is deleted, by an admin or
+// by retention.
+message SnapshotDeleted {
+  // ID of the deleted snapshot.
+  string snapshot_id = 1;
+
+  // ID of the admin who deleted it. Empty when retention deleted it.
+  string deleted_by_user_id = 2;
+
+  // When it was deleted.
+  google.protobuf.Timestamp occurred_at = 3;
+}
+
+// BackupSettingsChanged is published when the schedule or the retention
+// changes.
+message BackupSettingsChanged {
+  // ID of the admin who changed them.
+  string updated_by_user_id = 1;
+
+  // Schedule after the change.
+  string schedule = 2;
+
+  // Retention after the change.
+  int32 retention_count = 3;
+
+  // When the change was saved.
+  google.protobuf.Timestamp occurred_at = 4;
+}
