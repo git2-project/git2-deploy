@@ -21,3 +21,4 @@ Notes live in `<year>/<month>/<day>_<month>.md`.
 
 | Date | What changed | Affects | Tag |
 |---|---|---|---|
+| [28 Oct](2026/10/28_10.md) | `docker compose up` runs git2 (Postgres 18, Redis, migrations, git2 core, git-svc). Contracts v0 for `backup.v1` and the gateway are ready for review. Console: review backup.v1. git2: client IP from `X-Real-IP` behind the gateway. Codeplane: a bundle RPC for backups. CI: A-05/06/08/09/15 answered. | All | 🟠 Action |

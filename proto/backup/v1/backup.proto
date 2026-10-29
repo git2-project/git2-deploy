@@ -1,0 +1,308 @@
+// Package backup.v1 is the gRPC API of backup-svc, which takes encrypted
+// snapshots of a whole git2 instance and keeps them in the instance bucket.
+//
+// A snapshot holds everything a new server needs to become the same
+// instance: the PostgreSQL database, the Git repositories, git2.yaml and the
+// instance secrets, in one archive encrypted with age. The archive layout is
+// documented in docs/api/snapshot-format.md of git2-deploy.
+//
+// Conventions for the whole package (the same as git.v1 and ci.v1):
+//   - Every RPC has its own XRequest and XResponse message.
+//   - IDs are UUIDs in canonical text form. A malformed ID is
+//     INVALID_ARGUMENT, not NOT_FOUND.
+//   - backup-svc does not authenticate or authorize callers. The caller
+//     (admin-api, behind the gateway) checks that the user is an instance
+//     admin before calling.
+//   - List RPCs paginate per AIP-158: page_size 0 means 50, values above 100
+//     are treated as 100, a negative value is INVALID_ARGUMENT, and
+//     page_token is opaque.
+//   - Errors use standard gRPC codes. INTERNAL and UNAVAILABLE messages are
+//     generic: they never contain bucket URLs, credentials, file paths or
+//     SQL.
+//   - Domain events (SnapshotFinished, ...) are defined in events.proto.
+//
+// Restore is not an RPC. A restore runs on a fresh server where no git2
+// service is running yet, so `git2ctl restore` reads the snapshot straight
+// from the bucket (WBS-12.3).
+syntax = "proto3";
+
+package backup.v1;
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// BackupService takes, lists and deletes snapshots and holds the backup
+// schedule.
+service BackupService {
+  // CreateSnapshot starts a snapshot of the instance and returns at once.
+  //
+  // The returned snapshot is in STATE_PENDING. Poll GetSnapshot, or wait for
+  // the SnapshotFinished event, to learn the outcome. At most one snapshot
+  // runs at a time.
+  //
+  // A retry with the same request_id returns the snapshot the first call
+  // created instead of starting another one. The request_id check comes
+  // first, so the retry of a call whose snapshot is still running gets that
+  // snapshot, not ABORTED.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: request_id is not a UUID, requested_by_user_id is
+  //     empty or not a UUID, or request_id was already used with a
+  //     different requested_by_user_id.
+  //   - ABORTED: another snapshot is pending or running. Retry after it
+  //     finishes.
+  //   - FAILED_PRECONDITION: no backup target is configured in git2.yaml.
+  //     Retrying does not help until an operator configures one.
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+
+  // GetSnapshot returns a snapshot by ID.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: id is not a UUID.
+  //   - NOT_FOUND: no snapshot has this ID, or it was deleted.
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+
+  // ListSnapshots returns snapshots, newest first (by created_at, then id).
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: page_size is negative, or page_token was not
+  //     issued by this RPC.
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+
+  // DeleteSnapshot deletes a finished snapshot and its archive in the
+  // bucket.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: id is not a UUID.
+  //   - NOT_FOUND: no snapshot has this ID, or it was already deleted.
+  //   - FAILED_PRECONDITION: the snapshot is still pending or running.
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+
+  // GetBackupSettings returns the schedule, retention and target.
+  rpc GetBackupSettings(GetBackupSettingsRequest) returns (GetBackupSettingsResponse);
+
+  // UpdateBackupSettings changes the schedule, the retention, or both.
+  //
+  // Only the fields named in update_mask are written (AIP-134), so a client
+  // that sends only retention_count cannot turn the schedule off by
+  // accident. The target and the encryption recipient come from git2.yaml
+  // and cannot be changed through this API.
+  //
+  // Lowering retention_count does not delete anything at once. The extra
+  // snapshots are deleted after the next snapshot succeeds.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: update_mask is empty or names a field other than
+  //     "schedule" and "retention_count", schedule is not a valid cron
+  //     expression, retention_count is below 1 or above 365, or
+  //     updated_by_user_id is empty or not a UUID.
+  rpc UpdateBackupSettings(UpdateBackupSettingsRequest) returns (UpdateBackupSettingsResponse);
+}
+
+// Snapshot is one backup of the whole instance.
+message Snapshot {
+  // State is where a snapshot is in its life.
+  enum State {
+    // Not used.
+    STATE_UNSPECIFIED = 0;
+    // Accepted, not started yet.
+    STATE_PENDING = 1;
+    // Being written to the bucket.
+    STATE_RUNNING = 2;
+    // Complete. The archive is in the bucket and can be restored.
+    STATE_SUCCEEDED = 3;
+    // Stopped with an error. Nothing usable is in the bucket; see
+    // failure_reason.
+    STATE_FAILED = 4;
+  }
+
+  // Trigger says what started a snapshot.
+  enum Trigger {
+    // Not used.
+    TRIGGER_UNSPECIFIED = 0;
+    // An admin asked for it (CreateSnapshot).
+    TRIGGER_MANUAL = 1;
+    // The schedule in BackupSettings started it.
+    TRIGGER_SCHEDULED = 2;
+  }
+
+  // ID of the snapshot.
+  string id = 1;
+
+  // Current state.
+  State state = 2;
+
+  // What started the snapshot.
+  Trigger trigger = 3;
+
+  // ID of the admin who asked for the snapshot, as issued by auth-svc.
+  // Empty for scheduled snapshots.
+  string requested_by_user_id = 4;
+
+  // When the snapshot was requested.
+  google.protobuf.Timestamp created_at = 5;
+
+  // When backup-svc started writing it. Unset while pending.
+  google.protobuf.Timestamp started_at = 6;
+
+  // When it succeeded or failed. Unset until then.
+  google.protobuf.Timestamp finished_at = 7;
+
+  // Size of the encrypted archive in the bucket. 0 until it succeeds.
+  int64 size_bytes = 8;
+
+  // Number of Git repositories in the snapshot. 0 until it succeeds.
+  int64 repository_count = 9;
+
+  // Version of git2 that wrote the snapshot, for example "1.0.0". A restore
+  // needs a git2 of this version or newer.
+  string git2_version = 10;
+
+  // age public key the archive is encrypted to ("age1..."). It tells an
+  // operator which private key a restore needs. It is not a secret.
+  string recipient = 11;
+
+  // Why the snapshot failed, for an admin to read. Set only in
+  // STATE_FAILED. Never contains credentials, bucket URLs or file paths.
+  string failure_reason = 12;
+}
+
+// BackupTarget is where snapshots are written, as configured in git2.yaml.
+message BackupTarget {
+  // Kind is the storage driver.
+  enum Kind {
+    // Not used.
+    KIND_UNSPECIFIED = 0;
+    // An S3-compatible bucket (AWS S3, R2, Garage, SeaweedFS, Ceph, ...).
+    KIND_S3 = 1;
+    // A Google Cloud Storage bucket.
+    KIND_GCS = 2;
+    // An Azure Blob Storage container.
+    KIND_AZURE_BLOB = 3;
+    // A directory on the server's disk.
+    KIND_FILE = 4;
+  }
+
+  // Storage driver of the target.
+  Kind kind = 1;
+
+  // The target for people to read, without credentials or query
+  // parameters, for example "s3://acme-git2/backups/". Not meant to be
+  // parsed.
+  string display_name = 2;
+}
+
+// BackupSettings controls scheduled snapshots.
+message BackupSettings {
+  // When scheduled snapshots run, as a five-field cron expression in UTC,
+  // for example "0 2 * * *" for 02:00 every night. Empty turns scheduled
+  // snapshots off; manual snapshots still work.
+  string schedule = 1;
+
+  // How many succeeded snapshots to keep, 1 to 365. When a new snapshot
+  // succeeds, the oldest succeeded ones beyond this number are deleted.
+  // Failed snapshots do not count and are kept for 7 days.
+  int32 retention_count = 2;
+
+  // Where snapshots go. Unset when no target is configured. Read-only.
+  BackupTarget target = 3;
+
+  // age public key new snapshots are encrypted to. Read-only.
+  string recipient = 4;
+}
+
+// CreateSnapshotRequest is the request of CreateSnapshot.
+message CreateSnapshotRequest {
+  // Idempotency key chosen by the caller, a UUID. A retry with the same key
+  // returns the snapshot the first call created. Optional; empty means no
+  // deduplication. Keys are remembered for 24 hours.
+  string request_id = 1;
+
+  // ID of the admin asking for the snapshot, as issued by auth-svc.
+  // Required. Stored on the snapshot and in its events for the audit log.
+  string requested_by_user_id = 2;
+}
+
+// CreateSnapshotResponse is the response of CreateSnapshot.
+message CreateSnapshotResponse {
+  // The new snapshot, in STATE_PENDING, or the existing one for a repeated
+  // request_id.
+  Snapshot snapshot = 1;
+}
+
+// GetSnapshotRequest is the request of GetSnapshot.
+message GetSnapshotRequest {
+  // ID of the snapshot.
+  string id = 1;
+}
+
+// GetSnapshotResponse is the response of GetSnapshot.
+message GetSnapshotResponse {
+  // The snapshot.
+  Snapshot snapshot = 1;
+}
+
+// ListSnapshotsRequest is the request of ListSnapshots.
+message ListSnapshotsRequest {
+  // Maximum number of snapshots to return. 0 means 50; above 100 is
+  // treated as 100.
+  int32 page_size = 1;
+
+  // next_page_token from a previous call, or empty for the first page.
+  string page_token = 2;
+}
+
+// ListSnapshotsResponse is the response of ListSnapshots.
+message ListSnapshotsResponse {
+  // Snapshots on this page, newest first.
+  repeated Snapshot snapshots = 1;
+
+  // Token for the next page. Empty on the last page.
+  string next_page_token = 2;
+}
+
+// DeleteSnapshotRequest is the request of DeleteSnapshot.
+message DeleteSnapshotRequest {
+  // ID of the snapshot.
+  string id = 1;
+
+  // ID of the admin deleting it, as issued by auth-svc. Required. Carried
+  // in the SnapshotDeleted event for the audit log.
+  string deleted_by_user_id = 2;
+}
+
+// DeleteSnapshotResponse is the response of DeleteSnapshot.
+message DeleteSnapshotResponse {}
+
+// GetBackupSettingsRequest is the request of GetBackupSettings.
+message GetBackupSettingsRequest {}
+
+// GetBackupSettingsResponse is the response of GetBackupSettings.
+message GetBackupSettingsResponse {
+  // The current settings.
+  BackupSettings settings = 1;
+}
+
+// UpdateBackupSettingsRequest is the request of UpdateBackupSettings.
+message UpdateBackupSettingsRequest {
+  // New schedule. See BackupSettings.schedule. Written only when
+  // update_mask contains "schedule".
+  string schedule = 1;
+
+  // New retention. See BackupSettings.retention_count. Written only when
+  // update_mask contains "retention_count".
+  int32 retention_count = 2;
+
+  // ID of the admin changing the settings, as issued by auth-svc. Required.
+  string updated_by_user_id = 3;
+
+  // Which fields to write: "schedule", "retention_count", or both.
+  // Required.
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+// UpdateBackupSettingsResponse is the response of UpdateBackupSettings.
+message UpdateBackupSettingsResponse {
+  // The settings after the update.
+  BackupSettings settings = 1;
+}
