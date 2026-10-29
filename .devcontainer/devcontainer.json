@@ -1,0 +1,36 @@
+{
+  "name": "git2-deploy",
+
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/src/git2-deploy",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go",
+        "bufbuild.vscode-buf",
+        "ms-azuretools.vscode-docker",
+        "ms-vscode.makefile-tools"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "go.formatTool": "goimports",
+        "[go]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+        },
+        // Forward only ports a container process actually listens on, not every
+        // localhost:PORT printed in a terminal.
+        "remote.autoForwardPortsSource": "process"
+      }
+    }
+  },
+
+  "remoteUser": "root",
+
+  // git2 from the Compose stack, once it is running.
+  "forwardPorts": [8080],
+
+  "shutdownAction": "stopCompose"
+}

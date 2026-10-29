@@ -8,9 +8,13 @@
 
 | Path | What it is |
 | :--- | :--- |
-| `git2ctl/` | The operator CLI. `git2ctl install` takes a machine from zero to a running instance |
-| `helm/` | Helm chart for multi-node Kubernetes installs |
 | `compose/` | Docker Compose file for the all-in-one, single-machine install |
+| `images/` | One Dockerfile per image, built from the source repos |
+| `proto/backup/v1/` | `backup.v1`, the gRPC contract of backup-svc (generated Go code in `gen/go/`) |
+| `docs/api/` | Reference for the other lanes: Compose, gateway, backup, snapshot format |
+| `tests/` | End-to-end checks against a real Compose stack |
+| `git2ctl/` | The operator CLI. `git2ctl install` takes a machine from zero to a running instance (W3–W4) |
+| `helm/` | Helm chart for multi-node Kubernetes installs (W6–W7) |
 
 ## The three promises
 
@@ -22,7 +26,11 @@ All instance configuration lives in one file, `git2.yaml`.
 
 ## Status
 
-Early development, on the 9-week plan in the [org README](https://github.com/git2-project). Nothing here is ready to run yet; build and test commands will land in this file and in `CLAUDE.md` as the code does.
+Early development, on the 9-week plan in the [org README](https://github.com/git2-project). This is the scaffold: repo conventions, the devcontainer, the lane plan and the first decisions. The Compose stack and contract v0 of backup-svc and the gateway come next (W1). The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
+
+## Development
+
+Clone `git2` and `git2-codeplane` next to this repo, then open it in the devcontainer (VS Code: *Reopen in Container*). It has Go, the Docker CLI with Compose and its own Docker daemon, so test stacks stay off your host. Docker Desktop with Compose v2 on the host works too.
 
 ## Contributing
 
