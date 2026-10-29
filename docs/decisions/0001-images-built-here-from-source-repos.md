@@ -5,7 +5,7 @@
 
 ## Context
 
-WBS-13.1 asks for one Docker image per service and a Compose file that starts them with PostgreSQL and Redis. The services live in three repos (git2, git2-codeplane, git2-runner), and each repo's rules say other lanes never edit it. The team map gives the deploy lane "deployment for every module". Images must build for amd64 and arm64 (D-06).
+WBS-13.1 asks for one Docker image per service and a Compose file that starts them with PostgreSQL and Redis. The services live in three repos (git2, git2-codeplane, git2-runner), and each repo's CLAUDE.md says other lanes never edit it. The team map gives the deploy lane "deployment for every module". Images must build for amd64 and arm64 (D-06).
 
 Two common layouts:
 
