@@ -26,11 +26,20 @@ All instance configuration lives in one file, `git2.yaml`.
 
 ## Status
 
-Early development, on the 9-week plan in the [org README](https://github.com/git2-project). This is the scaffold: repo conventions, the devcontainer, the lane plan and the first decisions. The Compose stack and contract v0 of backup-svc and the gateway come next (W1). The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
+Early development, on the 9-week plan in the [org README](https://github.com/git2-project). Working today: the Compose stack (PostgreSQL, Redis, migrations, git2 core, git-svc) and contract v0 of backup-svc and the gateway. The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
 
-## Development
+## Quick start
 
-Clone `git2` and `git2-codeplane` next to this repo, then open it in the devcontainer (VS Code: *Reopen in Container*). It has Go, the Docker CLI with Compose and its own Docker daemon, so test stacks stay off your host. Docker Desktop with Compose v2 on the host works too.
+Clone `git2` (and `git2-codeplane` for git-svc) next to this repo, then:
+
+```bash
+cd compose
+cp env.example .env            # set POSTGRES_PASSWORD and JWT_SECRET
+docker compose up -d --build   # add --profile git-svc for the Git engine
+curl http://127.0.0.1:8080/healthz
+```
+
+`make tests` runs the smoke test, which brings up a throwaway stack and checks sign-in, isolation, hardening and persistence. Details: [`docs/api/compose.md`](docs/api/compose.md).
 
 ## Contributing
 

@@ -10,8 +10,8 @@ From the project plan (§2, §4). The project documents are in git2 under `docs/
 
 | WBS | What | Weeks | Done when | Status |
 |---|---|---|---|---|
-| 1.1 | Contracts v0 | W1 | `backup.v1` proto and the gateway contract merged and referenced from git2's `contracts/` | in review |
-| 13.1 | Dockerfiles and Compose | W1 | `docker compose up` starts all services, PostgreSQL and Redis on one host (M0) | in review |
+| 1.1 | Contracts v0 | W1 | `backup.v1` proto and the gateway contract merged and referenced from git2's `contracts/` | this PR |
+| 13.1 | Dockerfiles and Compose | W1 | `docker compose up` starts all services, PostgreSQL and Redis on one host (M0) | this PR |
 | 1.2 | Gateway: TLS, routing, sign-in check, both UIs | W2–W3 | Both UIs and all APIs reachable through one HTTPS endpoint; unauthenticated API calls rejected | |
 | 13.2 | `git2ctl install` and `upgrade` | W3–W4 | A working instance on a clean Linux host with Docker | |
 | 12.1 | backup-svc v0: encrypted snapshot | W4–W5 | Database, repositories, git2.yaml and secrets in one age archive with manifest and checksums | |

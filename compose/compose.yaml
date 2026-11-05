@@ -1,0 +1,150 @@
+# git2 on one machine: the core services, PostgreSQL and Redis.
+#
+#   cp env.example .env      # then fill in the two secrets
+#   docker compose up -d --build
+#   curl http://127.0.0.1:8080/healthz
+#
+# Images are built from source checkouts of the other repos, found next to
+# this one by default (../../git2, ../../git2-codeplane). Point GIT2_SRC or
+# CODEPLANE_SRC at a Git URL to build from GitHub instead, for example
+#   GIT2_SRC=https://github.com/git2-project/git2.git#main
+# Once the image pipeline (WBS-13.4) publishes to GHCR, `docker compose pull`
+# fetches the same image names and skips the build.
+#
+# Reference for other lanes: docs/api/compose.md. Why each choice:
+# docs/decisions/0002-compose-runtime.md.
+
+name: git2
+
+x-postgres-dsn: &postgres-dsn "postgres://git2:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/git2?sslmode=disable"
+
+# For psql: the password goes in PGPASSWORD, so it is not in the command
+# line of every psql process (visible in ps).
+x-postgres-dsn-nopass: &postgres-dsn-nopass "postgres://git2@postgres:5432/git2?sslmode=disable"
+
+# Applied to every git2 service: no extra privileges, read-only root file
+# system. A service that needs to write gets a volume or a tmpfs.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  # ── PostgreSQL: all durable data and the event outboxes ─────────────────
+  # Not published on the host. Only services on this network reach it.
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: git2
+      POSTGRES_DB: git2
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # Postgres 18 images keep data under /var/lib/postgresql/18/docker and
+    # declare the volume one level up. Changing the major version here does
+    # NOT upgrade the data: a new major starts an empty cluster next to the
+    # old one. Upgrade with dump and restore (ADR 0002).
+    # POSTGRES_PASSWORD is applied only when the volume is first created;
+    # changing it later locks every service out.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: during first start the image runs a socket-only temporary
+      # server, which a socket check would report as ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U git2 -d git2"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ── Redis: sessions, rate limits, signals. Holds nothing durable ────────
+  # Persistence is off on purpose: no service keeps data that a restore
+  # needs only in Redis, so Redis is not part of the backup (project plan
+  # §1.1). Losing it signs users out, resets rate limits, and lets access
+  # tokens revoked in the last JWT_EXPIRY (15 min) work until they expire.
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── migrate: applies git2's migrations/, then exits ─────────────────────
+  migrate:
+    image: ghcr.io/git2-project/git2-migrate:${GIT2_TAG:-dev}
+    build:
+      context: ../images/migrate
+      additional_contexts:
+        src: ${GIT2_SRC:-../../git2}
+    <<: *hardening
+    environment:
+      POSTGRES_DSN: *postgres-dsn-nopass
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ── git2 core: auth-svc today, the other control-plane services later ───
+  git2:
+    image: ghcr.io/git2-project/git2:${GIT2_TAG:-dev}
+    build:
+      context: ../images/git2
+      additional_contexts:
+        src: ${GIT2_SRC:-../../git2}
+    <<: *hardening
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8080"
+      ENVIRONMENT: ${GIT2_ENVIRONMENT:-prod}
+      POSTGRES_DSN: *postgres-dsn
+      REDIS_ADDR: redis:6379
+      # At least 32 characters; git2 exits at start with a shorter one.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -hex 32)}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Loopback only until the gateway (WBS-1.2) terminates TLS in front of
+    # it. Set GIT2_BIND=0.0.0.0 to reach it from other machines.
+    ports:
+      - "${GIT2_BIND:-127.0.0.1}:${GIT2_HTTP_PORT:-8080}:8080"
+
+  # ── git-svc: the Git engine (git2-codeplane) ────────────────────────────
+  # Opt-in with `--profile git-svc` until git-svc is merged to
+  # git2-codeplane's main and its git_svc migration is merged to git2 (PR #6).
+  # It fails its startup schema check without that migration.
+  git-svc:
+    profiles: [git-svc]
+    image: ghcr.io/git2-project/git-svc:${GIT2_TAG:-dev}
+    build:
+      context: ../images/git-svc
+      additional_contexts:
+        src: ${CODEPLANE_SRC:-../../git2-codeplane}
+    <<: *hardening
+    restart: unless-stopped
+    environment:
+      POSTGRES_DSN: *postgres-dsn
+    volumes:
+      - repositories:/var/lib/git2
+    tmpfs:
+      - /tmp
+    # git-svc waits up to 20 s for in-flight RPCs on shutdown.
+    stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # gRPC on 9090, reachable only from this network.
+    expose:
+      - "9090"
+
+volumes:
+  postgres-data:
+  repositories:
