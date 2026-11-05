@@ -1,0 +1,51 @@
+services:
+
+  # ── Go toolchain and Docker CLI (VS Code attaches here) ───────────────
+  # The parent folder is mounted, not just this repo: images build from the
+  # sibling checkouts (../git2, ../git2-codeplane), as on the host.
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    init: true
+    volumes:
+      - ../..:/src:cached
+      - go-modules:/go/pkg/mod
+      - go-build:/root/.cache/go-build
+    command: sleep infinity
+    # Shares the daemon's network namespace, so a port the stack publishes on
+    # 127.0.0.1 is reachable here on 127.0.0.1, exactly as on the host. The
+    # smoke test relies on that.
+    network_mode: service:docker
+    depends_on:
+      docker:
+        condition: service_healthy
+    environment:
+      DOCKER_HOST: tcp://127.0.0.1:2375
+
+  # ── Docker daemon for the git2 stack (Docker-in-Docker) ───────────────
+  # Keeps test stacks, their volumes and images off the host's Docker.
+  #
+  # Dev only: privileged, and plain TCP without TLS. It listens on the
+  # namespace shared with `app` and publishes nothing on the host.
+  docker:
+    image: docker:29-dind
+    privileged: true
+    restart: unless-stopped
+    environment:
+      # Empty turns TLS off; the entrypoint then listens on tcp://0.0.0.0:2375.
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - docker-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  go-modules:
+  go-build:
+  # Base images and build cache survive a container rebuild.
+  docker-data:

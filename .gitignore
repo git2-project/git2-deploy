@@ -1,0 +1,12 @@
+# Secrets: env.example files are the templates.
+.env
+compose/.env
+
+# Build output
+bin/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
