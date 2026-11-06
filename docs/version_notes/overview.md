@@ -17,6 +17,12 @@ Notes live in `<year>/<month>/<day>_<month>.md`.
 
 ---
 
+## 2026 · November
+
+| Date | What changed | Affects | Tag |
+|---|---|---|---|
+| [6 Nov](2026/11/06_11.md) | Gateway contract v0.1: it authenticates, services authorize. `X-Git2-User-Id` on Git routes only; `/api` services verify the token themselves. API Redis checks fail open as in auth-svc. Git route to `git-svc:9080`, owner-only in v0. Dash: `/raw` headers and size cap. Console: username lookup for Git sign-in. Codeplane: cut `v0.1.0`. | Dash, Console, Codeplane | 🟠 Action |
+
 ## 2026 · October
 
 | Date | What changed | Affects | Tag |
