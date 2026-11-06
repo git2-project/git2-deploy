@@ -4,16 +4,21 @@
 # check every promise the Compose stack makes (docs/design/compose.md):
 #
 #   1. It refuses to start without its secrets.
-#   2. `up` starts PostgreSQL, Redis and git2; migrations run first, once.
-#   3. Sign-in works end to end: register, log in, call /me with the token,
-#      and a wrong password is rejected.
-#   4. PostgreSQL and Redis are not published on the host; git2 only on
-#      127.0.0.1.
-#   5. Every git2 container (git2, migrate, git-svc) runs as a non-root user
-#      on a read-only file system with no capabilities.
+#   2. `up` starts PostgreSQL, Redis, git2 and the gateway; migrations run
+#      first, once.
+#   3. Sign-in works end to end through the gateway: register, log in, call
+#      /me with the token, and a wrong password is rejected.
+#   4. Only the gateway is published, on 127.0.0.1. PostgreSQL, Redis and
+#      git2 core have no host port.
+#   5. Every git2 container (gateway, git2, migrate, git-svc) runs as a
+#      non-root user on a read-only file system with no capabilities.
 #   6. Data survives `down` + `up`: migrations are not re-applied and the
 #      user can still log in.
-#   7. With --with-git-svc: git-svc starts and creates a repository over gRPC.
+#   7. The gateway (docs/api/gateway.md): serves Dash and Admin, refuses an
+#      API call without a token before git2 core sees it, and git2 core sees
+#      the client's IP, not the gateway's or a spoofed one (B-02).
+#   8. With --with-git-svc: git-svc starts, creates a repository over gRPC,
+#      and its Smart HTTP port (9080) is healthy.
 #
 # Usage: tests/smoke/compose_smoke.sh [--with-git-svc] [--keep]
 # Env:   GIT2_SRC, CODEPLANE_SRC (default: sibling checkouts), SMOKE_PORT.
@@ -74,9 +79,12 @@ fail() {
 	exit 1
 }
 
-wait_healthz() {
-	for _ in $(seq 1 60); do
-		curl -fsS "$BASE/healthz" >/dev/null 2>&1 && return 0
+# wait_ready waits until the gateway answers and git2 core behind it does:
+# /api/auth/me without a token is 401 from core, 503 while core is down.
+wait_ready() {
+	for _ in $(seq 1 90); do
+		code="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/auth/me" 2>/dev/null || true)"
+		[ "$code" = 401 ] && return 0
 		sleep 1
 	done
 	return 1
@@ -107,10 +115,10 @@ ok "config refuses empty POSTGRES_PASSWORD and JWT_SECRET"
 
 echo "== 2. up"
 dc up -d --build --quiet-pull >"$TMP/up.log" 2>&1 || fail "docker compose up: $(tail -20 "$TMP/up.log")"
-wait_healthz || fail "git2 /healthz did not answer within 60s"
+wait_ready || fail "git2 did not answer through the gateway within 90s"
 [ "$(dc ps -a --format '{{.State}} {{.ExitCode}}' migrate)" = "exited 0" ] || fail "migrate did not exit 0"
 dc logs migrate | grep -q 'applied [0-9]* migration' || fail "migrate applied nothing"
-ok "postgres, redis and git2 up; migrate ran and exited 0"
+ok "postgres, redis, git2 and gateway up; migrate ran and exited 0"
 
 echo "== 3. sign-in"
 user="smoke$RANDOM"
@@ -128,7 +136,7 @@ wrong="{\"email\":\"$user@example.test\",\"password\":\"wrong-password-1\"}"
 ok "register 201, login 200 with token, me 200, wrong password 401, no token 401"
 
 echo "== 4. not published on the host"
-for svc in postgres redis; do
+for svc in postgres redis git2; do
 	cid="$(dc ps -q "$svc")"
 	[ -n "$cid" ] || fail "$svc has no container"
 	ports="$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$cid")" || fail "inspect $svc"
@@ -136,14 +144,14 @@ for svc in postgres redis; do
 		fail "$svc is published on the host: $ports"
 	fi
 done
-cid="$(dc ps -q git2)"
-[ -n "$cid" ] || fail "git2 has no container"
+cid="$(dc ps -q gateway)"
+[ -n "$cid" ] || fail "gateway has no container"
 binds="$(docker inspect -f '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}} {{end}}{{end}}' "$cid")"
-[ "$binds" = "127.0.0.1 " ] || fail "git2 is bound to [$binds], expected only 127.0.0.1"
-ok "postgres and redis have no host ports; git2 only on 127.0.0.1"
+[ "$binds" = "127.0.0.1 " ] || fail "gateway is bound to [$binds], expected only 127.0.0.1"
+ok "postgres, redis and git2 have no host ports; the gateway only on 127.0.0.1"
 
 echo "== 5. hardening"
-hardened=(git2 migrate)
+hardened=(gateway git2 migrate)
 [ "$WITH_GIT_SVC" -eq 1 ] && hardened+=(git-svc)
 for svc in "${hardened[@]}"; do
 	cid="$(dc ps -a -q "$svc")"
@@ -159,13 +167,35 @@ ok "${hardened[*]}: non-root, read-only, no capabilities, no-new-privileges"
 echo "== 6. data survives down + up"
 dc down >/dev/null 2>&1 || fail "docker compose down"
 dc up -d >/dev/null 2>&1 || fail "docker compose up (second time)"
-wait_healthz || fail "git2 did not come back"
+wait_ready || fail "git2 did not come back"
 dc logs migrate | grep -q 'no pending migrations' || fail "migrations were applied again"
 [ "$(status POST /api/auth/login "$login")" = 200 ] || fail "login after restart: $(cat "$TMP/body")"
 ok "no pending migrations on restart; the user still logs in"
 
+echo "== 7. gateway"
+[ "$(curl -sS -o /dev/null -w '%{http_code} %{content_type}' "$BASE/")" = "200 text/html; charset=utf-8" ] || fail "Dash index not served at /"
+[ "$(curl -sS -o /dev/null -w '%{http_code} %{content_type}' "$BASE/admin/users")" = "200 text/html; charset=utf-8" ] || fail "Admin index not served at /admin/users"
+asset="$(curl -sS "$BASE/admin/" | grep -o '/admin/assets/[^"]*\.js' | head -1)"
+[ -n "$asset" ] && [ "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$asset")" = 200 ] || fail "Admin asset [$asset] not served"
+# Each request carries an ID that git2 core logs; core's log must not have
+# the unauthenticated one and must show the client, not the gateway, for the other.
+noauth="smoke-noauth-$$"
+[ "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Request-Id: $noauth" "$BASE/api/repos")" = 401 ] || fail "/api/repos without a token was not 401"
+spoof="smoke-ip-$$"
+curl -sS -o /dev/null -H "X-Request-Id: $spoof" -H 'X-Real-IP: 198.51.100.99' "$BASE/api/auth/me"
+sleep 1
+corelog="$(dc logs --no-log-prefix git2)"
+echo "$corelog" | grep -q "\[$noauth\]" && fail "git2 core received the request without a token"
+seen="$(echo "$corelog" | grep "\[$spoof\]" | sed -n 's/.* from \([^ ]*\) - .*/\1/p' | head -1)"
+seen="${seen%:*}"
+gwip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(dc ps -q gateway)")"
+[ -n "$seen" ] || fail "git2 core did not log the request [$spoof]"
+[ "$seen" != "$gwip" ] || fail "git2 core sees the gateway ($gwip) as the client (B-02)"
+[ "$seen" != "198.51.100.99" ] || fail "git2 core believed a client-sent X-Real-IP"
+ok "Dash and Admin served; no token is 401 before core; core sees the client ($seen), not the gateway ($gwip) or a spoof"
+
 if [ "$WITH_GIT_SVC" -eq 1 ]; then
-	echo "== 7. git-svc"
+	echo "== 8. git-svc"
 	[ "$(dc ps --format '{{.State}}' git-svc)" = "running" ] || fail "git-svc is not running"
 	src="${CODEPLANE_SRC:-$ROOT/../git2-codeplane}"
 	[ -d "$src/proto" ] || fail "--with-git-svc needs CODEPLANE_SRC to be a local checkout with proto/"
@@ -175,6 +205,14 @@ if [ "$WITH_GIT_SVC" -eq 1 ]; then
 		git-svc:9090 git.v1.RepositoryService/CreateRepository 2>&1)" || fail "CreateRepository: $out"
 	echo "$out" | grep -q '"name": "smoke"' || fail "CreateRepository: $out"
 	ok "git-svc created a repository over gRPC"
+	health=""
+	for _ in $(seq 1 60); do
+		health="$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q git-svc)")"
+		[ "$health" = healthy ] && break
+		sleep 1
+	done
+	[ "$health" = healthy ] || fail "git-svc Smart HTTP (9080) health check: $health (needs git2-codeplane#5)"
+	ok "git-svc Smart HTTP port 9080 is healthy"
 fi
 
 echo "PASS ($pass checks)"
