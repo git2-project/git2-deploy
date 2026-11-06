@@ -14,6 +14,7 @@ First match wins. The Git route comes first and matches only when the second pat
 | `GET /healthz` | gateway itself: is the process up | none | none |
 | `GET /readyz` | gateway itself: are git2 core and git-svc reachable | none | none |
 | `/api/auth/*` | git2 core (auth-svc) | none; auth-svc checks `/api/auth/me` itself | API limits |
+| `/api/setup/*` | git2 core (auth-svc first-admin setup, git2#18) | none; auth-svc checks the one-time setup token | API limits |
 | `/api/*` | git2 core (dash-api, admin-api) | access token required | API limits |
 | `/admin`, `/admin/*` | admin-web static files; unknown paths serve `admin/index.html` | none (the app signs in through `/api`) | none |
 | `/*` | dash-web static files; unknown paths serve `index.html` | none | none |
