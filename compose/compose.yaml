@@ -1,4 +1,4 @@
-# git2 on one machine: the core services, PostgreSQL and Redis.
+# git2 on one machine: the gateway, the core services, PostgreSQL and Redis.
 #
 #   cp env.example .env      # then fill in the two secrets
 #   docker compose up -d --build
@@ -103,6 +103,10 @@ services:
       REDIS_ADDR: redis:6379
       # At least 32 characters; git2 exits at start with a shorter one.
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -hex 32)}
+      # Believe X-Real-IP only from this network (B-02): every container on
+      # it is a git2 service, and the gateway is the only one clients reach.
+      # Without it, all clients share the gateway's per-IP rate-limit bucket.
+      TRUSTED_PROXY_CIDRS: ${GIT2_SUBNET:-172.31.250.0/24}
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,10 +114,35 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    # Loopback only until the gateway (WBS-1.2) terminates TLS in front of
-    # it. Set GIT2_BIND=0.0.0.0 to reach it from other machines.
+    # No host port: clients come in through the gateway.
+    expose:
+      - "8080"
+
+  # ── gateway: the one entry point (WBS-1.2), contract docs/api/gateway.md ──
+  # Routes /api to git2 core after the token check and serves Dash and Admin.
+  # Plain HTTP on loopback until TLS lands (W3).
+  gateway:
+    image: ghcr.io/git2-project/git2-gateway:${GIT2_TAG:-dev}
+    build:
+      context: ../images/gateway
+      additional_contexts:
+        src: ${GIT2_SRC:-../../git2}
+    <<: *hardening
+    restart: unless-stopped
+    environment:
+      GIT2_CORE_URL: http://git2:8080
+      REDIS_ADDR: redis:6379
+      # The same key git2 core signs with: the gateway checks access tokens.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -hex 32)}
+    depends_on:
+      redis:
+        condition: service_healthy
+      git2:
+        condition: service_started
+    # The only published port. Set GIT2_BIND=0.0.0.0 to reach it from other
+    # machines (plain HTTP until TLS, W3).
     ports:
-      - "${GIT2_BIND:-127.0.0.1}:${GIT2_HTTP_PORT:-8080}:8080"
+      - "${GIT2_BIND:-127.0.0.1}:${GIT2_HTTP_PORT:-8080}:8000"
 
   # ── git-svc: the Git engine (git2-codeplane) ────────────────────────────
   # Opt-in with `--profile git-svc` until git-svc is merged to
@@ -141,9 +170,28 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    # gRPC on 9090, reachable only from this network.
+    # gRPC on 9090 and Smart HTTP on 9080 (git2-codeplane#5), reachable only
+    # from this network. 9080 trusts X-Git2-User-Id from any caller, so it
+    # must never be published; the gateway sets that header (WBS-1.2).
     expose:
       - "9090"
+      - "9080"
+    # /healthz on the Smart HTTP port. busybox wget is in the Alpine image.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+# A fixed subnet, so git2 core can believe X-Real-IP from this network only
+# (TRUSTED_PROXY_CIDRS above). Change GIT2_SUBNET if it clashes with a
+# network on the host.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${GIT2_SUBNET:-172.31.250.0/24}
 
 volumes:
   postgres-data:

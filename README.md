@@ -26,7 +26,7 @@ All instance configuration lives in one file, `git2.yaml`.
 
 ## Status
 
-Early development, on the 9-week plan in the [org README](https://github.com/git2-project). Working today: the Compose stack (PostgreSQL, Redis, migrations, git2 core, git-svc) and contract v0 of backup-svc and the gateway. The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
+Early development, on the 9-week plan in the [org README](https://github.com/git2-project). Working today: the Compose stack (gateway, PostgreSQL, Redis, migrations, git2 core, git-svc) and contract v0 of backup-svc and the gateway. The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
 
 ## Quick start
 
