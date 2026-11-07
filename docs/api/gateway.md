@@ -76,6 +76,8 @@ Today git2 core reads the client IP from `RemoteAddr` (`internal/ratelimit`), an
 | Timeout | 30 s per request | no total timeout at the gateway, 5 min idle; git-svc ends one operation after 2 h |
 | Rate limit | per user and per IP (WBS-1.4, W5) | failed sign-ins per IP and per username from W2–W3, with the Git route; per user from W5 |
 
+The 30 s API timeout covers streams too. A server-sent-events response, such as dash-api's job log (`streamJobLog`, draft for W6), is cut after 30 s; the client reconnects and resumes with `offset`. If that proves too short, streaming paths get their own idle timeout before W6.
+
 ## Errors
 
 Every error from the gateway itself is JSON, `{"error": "<message>"}`, like git2 core's. Git routes answer `401`, `404` and `503` in plain text, because Git clients print the body.
