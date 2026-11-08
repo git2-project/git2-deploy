@@ -13,7 +13,7 @@
 | `proto/backup/v1/` | `backup.v1`, the gRPC contract of backup-svc (generated Go code in `gen/go/`) |
 | `docs/api/` | Reference for the other lanes: Compose, gateway, backup, snapshot format |
 | `tests/` | End-to-end checks against a real Compose stack |
-| `git2ctl/` | The operator CLI. `git2ctl install` takes a machine from zero to a running instance (W3–W4) |
+| `cmd/git2ctl/`, `internal/git2ctl/` | The operator CLI. `git2ctl install` takes a machine from zero to a running instance ([docs](docs/api/git2ctl.md)) |
 | `helm/` | Helm chart for multi-node Kubernetes installs (W6–W7) |
 
 ## The three promises
@@ -26,11 +26,18 @@ All instance configuration lives in one file, `git2.yaml`.
 
 ## Status
 
-Early development, on the 9-week plan in the [org README](https://github.com/git2-project). Working today: the Compose stack (gateway, PostgreSQL, Redis, migrations, git2 core, git-svc) and contract v0 of backup-svc and the gateway. The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
+Early development, on the 9-week plan in the [org README](https://github.com/git2-project). Working today: `git2ctl install`, the Compose stack (gateway with Git over HTTPS and TLS, PostgreSQL, Redis, migrations, git2 core, git-svc) and contract v0 of backup-svc and the gateway. The lane plan is in [`docs/design/plan.md`](docs/design/plan.md).
 
 ## Quick start
 
-Clone `git2` (and `git2-codeplane` for git-svc) next to this repo, then:
+With `git2ctl` (builds from GitHub; details in [`docs/api/git2ctl.md`](docs/api/git2ctl.md)):
+
+```bash
+go build -o git2ctl ./cmd/git2ctl
+./git2ctl install --dir ~/git2 --url http://127.0.0.1:8080 --with-git-svc
+```
+
+By hand, for development: clone `git2` (and `git2-codeplane` for git-svc) next to this repo, then:
 
 ```bash
 cd compose

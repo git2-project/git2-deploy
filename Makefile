@@ -7,11 +7,15 @@
 GO     ?= go
 GOTOOL := $(GO) tool -modfile=tools.mod
 
-.PHONY: run tests lint proto proto-check
+.PHONY: run tests lint proto proto-check git2ctl
 
 ## run: build and start the Compose stack (needs compose/.env, see compose/env.example)
 run:
 	docker compose --project-directory compose up -d --build
+
+## git2ctl: build the operator CLI into bin/
+git2ctl:
+	$(GO) build -o bin/git2ctl ./cmd/git2ctl
 
 ## tests: Go tests, then the Compose smoke test (needs Docker)
 tests:
