@@ -1,0 +1,28 @@
+# TLS at the gateway (FR-02, NFR-04): HTTPS on GIT2_HTTPS_PORT, and plain
+# HTTP on GIT2_HTTP_PORT only to redirect to GIT2_EXTERNAL_URL.
+#
+#   docker compose -f compose.yaml -f compose.tls.yaml up -d
+#
+# GIT2_TLS_DIR holds fullchain.pem (leaf first) and privkey.pem, the names
+# certbot writes. The gateway runs as uid 65532, which must be able to read
+# privkey.pem (for example chgrp 65532 and chmod 640). Certificates are read
+# at start: restart the gateway after a renewal.
+# Reference: docs/api/compose.md, "TLS".
+
+services:
+  gateway:
+    environment:
+      GATEWAY_PORT: "8443"
+      GATEWAY_TLS_CERT_FILE: /etc/git2/tls/fullchain.pem
+      GATEWAY_TLS_KEY_FILE: /etc/git2/tls/privkey.pem
+      GATEWAY_HTTP_REDIRECT_PORT: "8080"
+      # The address users type, https://<host>[:port]. Redirects go here,
+      # never to the request's Host header.
+      GIT2_EXTERNAL_URL: ${GIT2_EXTERNAL_URL:?set GIT2_EXTERNAL_URL to https://<host> for TLS}
+    volumes:
+      - ${GIT2_TLS_DIR:?set GIT2_TLS_DIR to the directory with fullchain.pem and privkey.pem}:/etc/git2/tls:ro
+    # Replaces the plain-HTTP port of compose.yaml. TLS makes it safe to
+    # listen on every interface, so the default bind is 0.0.0.0 here.
+    ports: !override
+      - "${GIT2_BIND:-0.0.0.0}:${GIT2_HTTPS_PORT:-443}:8443"
+      - "${GIT2_BIND:-0.0.0.0}:${GIT2_HTTP_PORT:-80}:8080"
