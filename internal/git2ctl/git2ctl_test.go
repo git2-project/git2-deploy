@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -347,4 +348,22 @@ func TestInstallReportsAFailedStart(t *testing.T) {
 			t.Fatal("the containers were removed; E3 leaves them running for the logs")
 		}
 	})
+}
+
+// A non-root operator cannot bind 443 itself; Docker can. That is not "in use".
+func TestPortCheckIgnoresAPermissionError(t *testing.T) {
+	orig := listenTCP
+	t.Cleanup(func() { listenTCP = orig })
+	listenTCP = func(string, string) (net.Listener, error) {
+		return nil, &net.OpError{Op: "listen", Err: os.NewSyscallError("bind", syscall.EACCES)}
+	}
+	if err := portFree("0.0.0.0", 443); err != nil {
+		t.Fatalf("permission denied was reported as %v", err)
+	}
+	listenTCP = func(string, string) (net.Listener, error) {
+		return nil, &net.OpError{Op: "listen", Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+	}
+	if err := portFree("0.0.0.0", 443); err == nil {
+		t.Fatal("a port in use passed")
+	}
 }

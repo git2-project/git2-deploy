@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // minCompose is the oldest Compose that reads compose.tls.yaml: its
@@ -67,11 +68,19 @@ func Preflight(ctx context.Context, run Runner, dir string, c *Config) error {
 	return nil
 }
 
+// listenTCP is net.Listen; tests replace it to simulate a refused bind.
+var listenTCP = net.Listen
+
 // portFree tries to listen where the gateway will. It is a check, not a
 // reservation: something could still take the port before Compose does.
+// A permission error is not "in use": an operator in the docker group may
+// not bind 80 or 443 itself, but the Docker daemon publishes them for it.
 func portFree(host string, port int) error {
-	l, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-	if err != nil {
+	l, err := listenTCP("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	switch {
+	case errors.Is(err, syscall.EACCES):
+		return nil
+	case err != nil:
 		return fmt.Errorf("port %d in use on %s: stop what holds it or choose another port", port, host)
 	}
 	return l.Close()
