@@ -58,9 +58,9 @@ The gateway is the edge: **on every route** it deletes every `X-Git2-*`, `X-Real
 
 Upstreams trust these headers only on connections from the gateway. Two things enforce that:
 - once the gateway exists, it is the only published service; git2 core and git-svc have no host port;
-- git2 core accepts `X-Real-IP` only when the connection comes from the gateway's network address.
+- git2 core accepts `X-Real-IP` only when the connection comes from the gateway's network address (`TRUSTED_PROXY_CIDRS`).
 
-Today git2 core reads the client IP from `RemoteAddr` (`internal/ratelimit`), and its comment expects the gateway to rewrite that. A separate gateway cannot do this, so git2 core must switch to `X-Real-IP` as above (assumption B-02, [version note, 28 Oct](../version_notes/2026/10/28_10.md)).
+git2 core does this in one place, `internal/realip` (git2#22, assumption B-02): for a connection from `TRUSTED_PROXY_CIDRS` it replaces `RemoteAddr` with `X-Real-IP`, and from anywhere else it ignores the header. Services keep reading the client IP from `RemoteAddr` (`internal/ratelimit`) and never read `X-Real-IP` themselves, so the trust check cannot be skipped.
 
 ## What clients receive
 
