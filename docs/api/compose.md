@@ -41,8 +41,11 @@ Inside the network, services reach each other by service name: `postgres:5432`, 
 |---|---|---|
 | `POSTGRES_PASSWORD` | — (required) | Password of the `git2` database user. Use hex: it goes into a connection URL. Applied only when the database volume is first created. Changing it later locks every service out; change it in Postgres first (`ALTER ROLE`). |
 | `JWT_SECRET` | — (required) | auth-svc's signing key, at least 32 characters. A shorter one makes git2 exit at start and restart in a loop. |
-| `GIT2_BIND` | `127.0.0.1` | Host address the gateway listens on. `0.0.0.0` for other machines (plain HTTP until TLS, W3). |
-| `GIT2_HTTP_PORT` | `8080` | Host port of the gateway. |
+| `GIT2_BIND` | `127.0.0.1` | Host address the gateway listens on. For other machines use TLS (below), where it defaults to `0.0.0.0`. |
+| `GIT2_HTTP_PORT` | `8080` | Host port of the gateway. With TLS: the redirect port, default `80`. |
+| `GIT2_HTTPS_PORT` | `443` | With TLS only: the HTTPS port. |
+| `GIT2_EXTERNAL_URL` | — (required with TLS) | `https://<host>[:port]`, the address users type. HTTP redirects go here. |
+| `GIT2_TLS_DIR` | — (required with TLS) | Directory with `fullchain.pem` and `privkey.pem`, readable by uid 65532. |
 | `GIT2_SUBNET` | `172.31.250.0/24` | Subnet of the Compose network. git2 core believes `X-Real-IP` only from it (`TRUSTED_PROXY_CIDRS`). Change it if it clashes with a host network. |
 | `GIT2_SRC` | `../../git2` | git2 source: a path relative to `compose/` or a Git URL with `#ref`. |
 | `CODEPLANE_SRC` | `../../git2-codeplane` | git2-codeplane source, same rules. |
@@ -50,6 +53,18 @@ Inside the network, services reach each other by service name: `postgres:5432`, 
 | `GIT2_ENVIRONMENT` | `prod` | git2's `ENVIRONMENT`. |
 
 Every service gets the same database URL in `POSTGRES_DSN`: `postgres://git2:<password>@postgres:5432/git2?sslmode=disable`.
+
+## TLS
+
+```sh
+docker compose -f compose.yaml -f compose.tls.yaml up -d
+```
+
+`compose.tls.yaml` turns on TLS at the gateway (FR-02, NFR-04): HTTPS on `GIT2_HTTPS_PORT`, TLS 1.2 and newer, `Strict-Transport-Security` for a year. Plain HTTP on `GIT2_HTTP_PORT` answers only with `308` to `GIT2_EXTERNAL_URL`; `308` keeps the method, so a `git push` to `http://` is not replayed as a GET. It replaces the loopback port of `compose.yaml`.
+
+- The certificate files are read at start. Restart the gateway after a renewal: `docker compose -f compose.yaml -f compose.tls.yaml restart gateway`.
+- certbot's `live/` directory holds symlinks into `archive/`, which a bind mount does not follow. Copy `fullchain.pem` and `privkey.pem` to `GIT2_TLS_DIR` on each renewal.
+- `git2ctl install` (WBS-13.2) will write these settings; this file is what it uses.
 
 ## Rules every git2 service gets
 
@@ -64,7 +79,7 @@ These apply to the images built here (gateway, git2, migrate, git-svc). The offi
 
 ## Known limits (W1)
 
-- **Rate limits by IP.** git2 core now sees the client the gateway saw (`X-Real-IP`, B-02). Behind Docker's port publishing that is often the Docker bridge address (on Docker Desktop: `172.31.250.1`), so clients on one host can still share a bucket. TLS on the gateway with the host network (W3) gives the real address.
+- **Rate limits by IP.** git2 core now sees the client the gateway saw (`X-Real-IP`, B-02). Behind Docker's port publishing that is often the Docker bridge address (on Docker Desktop: `172.31.250.1`), so clients on one host can still share a bucket. The gateway on the host network (with TLS, so it can face clients) would give the real address; not done yet.
 - **Postgres major upgrades.** Changing `postgres:18-alpine` to a new major does not upgrade the data: the new server starts an empty cluster next to the old one, and git2 comes up empty. Until `git2ctl upgrade` handles it (W3–W4), upgrade with `pg_dump` from the old version and restore into the new one.
 - **Everything shares one database role and one network,** and Redis has no password. Least-privilege roles and split networks are planned with `git2ctl install` (W3–W4).
 

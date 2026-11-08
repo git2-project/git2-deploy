@@ -119,8 +119,9 @@ services:
       - "8080"
 
   # ── gateway: the one entry point (WBS-1.2), contract docs/api/gateway.md ──
-  # Routes /api to git2 core after the token check and serves Dash and Admin.
-  # Plain HTTP on loopback until TLS lands (W3).
+  # Routes /api to git2 core after the token check, Git over HTTPS to git-svc
+  # after a password sign-in, and serves Dash and Admin.
+  # Plain HTTP on loopback here; compose.tls.yaml adds TLS for other machines.
   gateway:
     image: ghcr.io/git2-project/git2-gateway:${GIT2_TAG:-dev}
     build:
@@ -134,13 +135,23 @@ services:
       REDIS_ADDR: redis:6379
       # The same key git2 core signs with: the gateway checks access tokens.
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -hex 32)}
+      # Git sign-in checks passwords against auth-svc's users, then finds the
+      # repository on git-svc. Without the git-svc profile, Git requests get
+      # 503 and /readyz names git-svc.
+      POSTGRES_DSN: *postgres-dsn
+      GIT_SVC_GRPC_ADDR: git-svc:9090
+      GIT_SVC_HTTP_URL: http://git-svc:9080
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       git2:
         condition: service_started
-    # The only published port. Set GIT2_BIND=0.0.0.0 to reach it from other
-    # machines (plain HTTP until TLS, W3).
+    # The only published port, on loopback. For other machines use
+    # compose.tls.yaml, which replaces it with HTTPS and an HTTP redirect.
     ports:
       - "${GIT2_BIND:-127.0.0.1}:${GIT2_HTTP_PORT:-8080}:8000"
 
@@ -172,7 +183,8 @@ services:
         condition: service_completed_successfully
     # gRPC on 9090 and Smart HTTP on 9080 (git2-codeplane#5), reachable only
     # from this network. 9080 trusts X-Git2-User-Id from any caller, so it
-    # must never be published; the gateway sets that header (WBS-1.2).
+    # must never be published; Git clients come in through the gateway,
+    # which signs them in and sets that header.
     expose:
       - "9090"
       - "9080"
