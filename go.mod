@@ -3,6 +3,7 @@ module github.com/git2-project/git2-deploy
 go 1.26.0
 
 require (
+	go.yaml.in/yaml/v3 v3.0.4
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
