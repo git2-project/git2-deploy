@@ -5,7 +5,7 @@ Each item names its owner and the week it must be settled by. When an owner conf
 | ID | Assumption | Owner | By | Status |
 |---|---|---|---|---|
 | [B-01](#b-01--repository-bundles-come-from-git-svc) | Repository bundles come from git-svc | Apo | W4 | open |
-| [B-02](#b-02--the-client-ip-behind-the-gateway) | The client IP behind the gateway | git2 owners | W2 | open |
+| [B-02](#b-02--the-client-ip-behind-the-gateway) | The client IP behind the gateway | git2 owners | W2 | built, in review (git2#22) |
 | [B-03](#b-03--every-service-reads-only-the-environment) | Every service reads only the environment | everyone | W3 | open |
 | [B-04](#b-04--health-endpoints) | Health endpoints | everyone | W3 | open |
 | [B-05](#b-05--reserved-owner-names) | Reserved owner names | Beste (auth-svc) | W2 | open |
