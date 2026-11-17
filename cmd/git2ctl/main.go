@@ -65,7 +65,7 @@ func install(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	fs.StringVar(&o.ExternalURL, "url", "", "address users type: https://<host>[:port], or http://127.0.0.1:<port> for this machine only (required)")
 	fs.StringVar(&o.TLSDir, "tls-dir", "", "directory with fullchain.pem and privkey.pem (required for https)")
 	fs.IntVar(&o.HTTPPort, "http-port", 0, "with https: the plain-HTTP port that redirects (default 80)")
-	fs.BoolVar(&o.WithGitSvc, "with-git-svc", false, "also run git-svc (Git over HTTPS)")
+	fs.BoolVar(&o.WithGitSvc, "with-git-svc", true, "run git-svc, the Git engine (Git over HTTPS); false for an instance without Git")
 	fs.StringVar(&o.Git2Src, "git2-src", "", "git2 source to build from (default "+git2ctl.DefaultGit2Src+")")
 	fs.StringVar(&o.CodeplaneSrc, "codeplane-src", "", "git2-codeplane source to build from (default "+git2ctl.DefaultCodeplaneSrc+")")
 	if err := fs.Parse(args); err != nil {

@@ -34,7 +34,7 @@ With `git2ctl` (builds from GitHub; details in [`docs/api/git2ctl.md`](docs/api/
 
 ```bash
 go build -o git2ctl ./cmd/git2ctl
-./git2ctl install --dir ~/git2 --url http://127.0.0.1:8080 --with-git-svc
+./git2ctl install --dir ~/git2 --url http://127.0.0.1:8080
 ```
 
 By hand, for development: clone `git2` (and `git2-codeplane` for git-svc) next to this repo, then:

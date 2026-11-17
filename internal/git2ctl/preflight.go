@@ -33,9 +33,10 @@ var ErrInstalled = errors.New("git2 is already installed here")
 
 // Preflight checks the host before anything is written or started (UC-01,
 // step 2). The first failed check is returned, naming what to fix.
-func Preflight(ctx context.Context, run Runner, dir string, c *Config) error {
+func Preflight(ctx context.Context, run Runner, dir, project string, c *Config) error {
 	if _, err := os.Stat(filepath.Join(dir, ConfigFile)); err == nil {
-		return fmt.Errorf("%w (%s): use `git2ctl upgrade`, or remove the directory to start over", ErrInstalled, dir)
+		return fmt.Errorf("%w (%s): use `git2ctl upgrade`, or start over with %s and then remove the directory",
+			ErrInstalled, dir, startOver(project))
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("check %s: %w", dir, err)
 	}
@@ -53,6 +54,9 @@ func Preflight(ctx context.Context, run Runner, dir string, c *Config) error {
 	if v := strings.TrimSpace(string(out)); !atLeast(v, minCompose) {
 		return fmt.Errorf("docker compose %s is too old: git2 needs %d.%d.%d or newer", v, minCompose[0], minCompose[1], minCompose[2])
 	}
+	if err := projectUnused(ctx, run, project); err != nil {
+		return err
+	}
 	if c.TLS() {
 		for _, f := range []string{"fullchain.pem", "privkey.pem"} {
 			if _, err := os.Stat(filepath.Join(c.TLSDir, f)); err != nil {
@@ -66,6 +70,39 @@ func Preflight(ctx context.Context, run Runner, dir string, c *Config) error {
 		}
 	}
 	return nil
+}
+
+// projectUnused refuses a Compose project that already has containers or
+// volumes. Its data volumes live in Docker, not in the install directory, so
+// they outlive a removed directory, a failed start or a timed-out install.
+// PostgreSQL applies POSTGRES_PASSWORD only to an empty volume: a new install
+// with fresh secrets on an old volume could never sign in to its database.
+// Compose labels everything it creates with the project name.
+func projectUnused(ctx context.Context, run Runner, project string) error {
+	label := "label=com.docker.compose.project=" + project
+	for _, q := range []struct {
+		what string
+		args []string
+	}{
+		{"containers", []string{"ps", "-aq", "--filter", label}},
+		{"volumes", []string{"volume", "ls", "-q", "--filter", label}},
+	} {
+		out, err := run.Run(ctx, "docker", q.args...)
+		if err != nil {
+			return fmt.Errorf("list the %s of Compose project %q: %s", q.what, project, firstLine(out))
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			return fmt.Errorf("the Compose project %q already has %s, from an earlier install: "+
+				"start over with %s, or install as another project with --project",
+				project, q.what, startOver(project))
+		}
+	}
+	return nil
+}
+
+// startOver is the command that removes a project's containers and volumes.
+func startOver(project string) string {
+	return fmt.Sprintf("`docker compose -p %s down -v` (this deletes its database and repositories)", project)
 }
 
 // listenTCP is net.Listen; tests replace it to simulate a refused bind.

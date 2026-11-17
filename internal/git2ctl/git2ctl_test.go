@@ -24,7 +24,9 @@ type fakeDocker struct {
 	arch, compose string
 	infoErr       bool
 	upErr         bool
-	calls         [][]string
+	// containers and volumes answer the project-label queries.
+	containers, volumes string
+	calls               [][]string
 }
 
 func (f *fakeDocker) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -37,6 +39,10 @@ func (f *fakeDocker) Run(_ context.Context, name string, args ...string) ([]byte
 		return []byte(f.arch + "\n"), nil
 	case slices.Equal(args, []string{"compose", "version", "--short"}):
 		return []byte(f.compose + "\n"), nil
+	case slices.Equal(args, []string{"ps", "-aq", "--filter", "label=com.docker.compose.project=git2"}):
+		return []byte(f.containers), nil
+	case slices.Equal(args, []string{"volume", "ls", "-q", "--filter", "label=com.docker.compose.project=git2"}):
+		return []byte(f.volumes), nil
 	case slices.Contains(args, "up"):
 		if f.upErr {
 			return []byte("pull access denied"), errors.New("exit 1")
@@ -197,6 +203,10 @@ func TestPreflightNamesWhatIsMissing(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "already installed"},
+		// A reinstall must not meet the old database volume: Postgres keeps
+		// the password it was created with and refuses the new one.
+		{"old volumes left", &fakeDocker{arch: "x86_64", compose: "2.29.1", volumes: "git2_postgres-data\ngit2_repositories\n"}, nil, "down -v"},
+		{"old containers left", &fakeDocker{arch: "x86_64", compose: "2.29.1", containers: "3f2a9c1d\n"}, nil, "--project"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -204,13 +214,13 @@ func TestPreflightNamesWhatIsMissing(t *testing.T) {
 			if c.setup != nil {
 				c.setup(t, dir, cfg)
 			}
-			err := Preflight(context.Background(), c.docker, dir, cfg)
+			err := Preflight(context.Background(), c.docker, dir, "git2", cfg)
 			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 				t.Fatalf("err = %v, want one mentioning %q", err, c.wantErr)
 			}
 		})
 	}
-	if err := Preflight(context.Background(), okDocker(), t.TempDir(), plainConfig(t)); err != nil {
+	if err := Preflight(context.Background(), okDocker(), t.TempDir(), "git2", plainConfig(t)); err != nil {
 		t.Fatalf("a good host failed preflight: %v", err)
 	}
 }
@@ -221,7 +231,7 @@ func TestPreflightNeedsTheTLSFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Preflight(context.Background(), okDocker(), t.TempDir(), c); err == nil || !strings.Contains(err.Error(), "fullchain.pem") {
+	if err := Preflight(context.Background(), okDocker(), t.TempDir(), "git2", c); err == nil || !strings.Contains(err.Error(), "fullchain.pem") {
 		t.Fatalf("err = %v, want the missing fullchain.pem named", err)
 	}
 }

@@ -23,7 +23,7 @@ const ConfigVersion = 1
 // Compose builds from these Git URLs.
 const (
 	DefaultGit2Src      = "https://github.com/git2-project/git2.git#dev/main"
-	DefaultCodeplaneSrc = "https://github.com/git2-project/git2-codeplane.git#main"
+	DefaultCodeplaneSrc = "https://github.com/git2-project/git2-codeplane.git#v0.2.0"
 )
 
 // Config is git2.yaml: everything an instance needs, in the one file the

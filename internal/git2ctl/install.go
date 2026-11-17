@@ -28,8 +28,9 @@ const (
 	envFile    = "compose/.env"
 )
 
-// DefaultReadyTimeout leaves room for the first build inside NFR-15's 10
-// minutes; with published images (WBS-13.4) start-up takes seconds.
+// DefaultReadyTimeout starts after `docker compose up -d --build` returns, so
+// a cold install takes the image build plus up to this long. With published
+// images (WBS-13.4) there is no build and start-up takes seconds.
 const DefaultReadyTimeout = 8 * time.Minute
 
 // Prober asks the running instance for a path's HTTP status.
@@ -52,7 +53,7 @@ type Installer struct {
 // the stack does not become ready, the containers are left running so the
 // operator can read their logs (E3).
 func (in *Installer) Install(ctx context.Context, c *Config) error {
-	if err := Preflight(ctx, in.Run, in.Dir, c); err != nil {
+	if err := Preflight(ctx, in.Run, in.Dir, in.Project, c); err != nil {
 		return err
 	}
 	if err := writeInstall(in.Dir, c); err != nil {
@@ -61,7 +62,7 @@ func (in *Installer) Install(ctx context.Context, c *Config) error {
 	fmt.Fprintf(in.Out, "wrote %s; starting git2 (the first start builds the images)\n", filepath.Join(in.Dir, ConfigFile))
 	up := append(composeArgs(in.Dir, in.Project, c), "up", "-d", "--build", "--quiet-pull")
 	if out, err := in.Run.Run(ctx, "docker", up...); err != nil {
-		return fmt.Errorf("docker compose up failed, nothing is running: %s", tail(out, 20))
+		return fmt.Errorf("docker compose up failed (see what still runs: docker compose -p %s ps -a): %s", in.Project, tail(out, 20))
 	}
 	probe := in.Probe
 	if probe == nil {
