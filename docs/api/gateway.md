@@ -19,7 +19,7 @@ First match wins. The Git route comes first and matches only when the second pat
 | `/admin`, `/admin/*` | admin-web static files; unknown paths serve `admin/index.html` | none (the app signs in through `/api`) | none |
 | `/*` | dash-web static files; unknown paths serve `index.html` | none | none |
 
-**Reserved names.** Because Dash pages use `/<owner>/<repo>` paths, no user or organization may be called `api`, `admin`, `healthz`, `readyz`, `assets`, `static`, `login`, `logout`, `settings`, `explore` or `new`. auth-svc must refuse them at sign-up and rename (assumption B-05).
+**Reserved names.** Because Dash pages use `/<owner>/<repo>` paths, no user or organization may be called `admin`, `api`, `assets`, `dashboard`, `explore`, `healthz`, `login`, `logout`, `new`, `notifications`, `orgs`, `readyz`, `register`, `repos`, `search`, `settings`, `sign-in`, `static`, `users`. They are the gateway's own paths (`healthz`, `readyz`, `api`, `admin`), the web apps' top-level routes (`sign-in`, `register`, the OIDC `/sign-in/callback`, and the rest), and names reserved ahead of Dash routes. auth-svc refuses them after trimming and lowercasing, at sign-up, first-admin setup and admin-api (`reservedNames` in `auth-svc/user.go`, git2#29); its list and this one must stay the same (assumption B-05).
 
 CI runners do not use the gateway. They connect to ci-svc's runner port directly (git2-runner assumption A-09).
 

@@ -8,7 +8,7 @@ Each item names its owner and the week it must be settled by. When an owner conf
 | [B-02](#b-02--the-client-ip-behind-the-gateway) | The client IP behind the gateway | git2 owners | W2 | built, in review (git2#22) |
 | [B-03](#b-03--every-service-reads-only-the-environment) | Every service reads only the environment | everyone | W3 | open |
 | [B-04](#b-04--health-endpoints) | Health endpoints | everyone | W3 | open |
-| [B-05](#b-05--reserved-owner-names) | Reserved owner names | Beste (auth-svc) | W2 | open |
+| [B-05](#b-05--reserved-owner-names) | Reserved owner names | Beste (auth-svc) | W2 | answered: git2#29 |
 
 Weeks: W1 starts 26 Oct 2026.
 
@@ -36,7 +36,8 @@ Weeks: W1 starts 26 Oct 2026.
 
 ### B-05 · Reserved owner names
 
-**We assume:** auth-svc refuses usernames and organization names that collide with top-level paths: `api`, `admin`, `healthz`, `readyz`, `assets`, `static`, `login`, `logout`, `settings`, `explore`, `new` (list in [gateway.md](../api/gateway.md#routes)). Today it has no such list.
+**We assume:** auth-svc refuses usernames and organization names that collide with top-level paths: `admin`, `api`, `assets`, `dashboard`, `explore`, `healthz`, `login`, `logout`, `new`, `notifications`, `orgs`, `readyz`, `register`, `repos`, `search`, `settings`, `sign-in`, `static`, `users` (list in [gateway.md](../api/gateway.md#routes)).
+**Answer:** git2#29 adds `reservedNames` to auth-svc with exactly these 19 names, checked after trimming and lowercasing for every new account (sign-up, first-admin setup, admin-api; OIDC sign-in in git2#41 picks usernames through the same check). A new top-level Dash route needs a line in both lists.
 **If wrong:** a user called `admin` has a profile page the gateway serves as the Admin app, and their repositories' web pages are unreachable.
 
 ---

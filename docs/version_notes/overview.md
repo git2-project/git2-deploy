@@ -21,6 +21,7 @@ Notes live in `<year>/<month>/<day>_<month>.md`.
 
 | Date | What changed | Affects | Tag |
 |---|---|---|---|
+| [17 Nov](2026/11/17_11.md) | Reserved owner names (B-05) match auth-svc's list from git2#29: 19 names, adding `sign-in`, `register` and six names reserved ahead of Dash routes. Dash: a new top-level route needs a line in both lists. | Dash, Console | 🟠 Action |
 | [8 Nov](2026/11/08_11.md) | Git over HTTPS through the gateway: clone, fetch and push as the owner, with username and password; failed sign-ins limited. TLS with `compose.tls.yaml` (HTTPS, HSTS, HTTP redirect). Console and Codeplane: review git2#24. | Console, Codeplane | 🟢 New |
 | [6 Nov](2026/11/06_11.md) | Gateway contract v0.1: it authenticates, services authorize. `X-Git2-User-Id` on Git routes only; `/api` services verify the token themselves. API Redis checks fail open as in auth-svc. Git route to `git-svc:9080`, owner-only in v0. Dash: `/raw` headers and size cap. Console: username lookup for Git sign-in. Codeplane: cut `v0.1.0`. Compose: the gateway is the only published port; `GIT2_SUBNET`; git-svc 9080. | All | 🟠 Action |
 
