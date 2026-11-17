@@ -40,6 +40,18 @@ func Preflight(ctx context.Context, run Runner, dir, project string, c *Config) 
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("check %s: %w", dir, err)
 	}
+	if err := checkDocker(ctx, run); err != nil {
+		return err
+	}
+	if err := projectUnused(ctx, run, project); err != nil {
+		return err
+	}
+	return tlsAndPorts(c)
+}
+
+// checkDocker checks that the Docker daemon answers on a supported
+// architecture and that Compose is new enough. Install and upgrade both need it.
+func checkDocker(ctx context.Context, run Runner) error {
 	arch, err := run.Run(ctx, "docker", "info", "--format", "{{.Architecture}}")
 	if err != nil {
 		return fmt.Errorf("the Docker daemon is not running or not reachable (docker info: %s)", firstLine(arch))
@@ -54,9 +66,11 @@ func Preflight(ctx context.Context, run Runner, dir, project string, c *Config) 
 	if v := strings.TrimSpace(string(out)); !atLeast(v, minCompose) {
 		return fmt.Errorf("docker compose %s is too old: git2 needs %d.%d.%d or newer", v, minCompose[0], minCompose[1], minCompose[2])
 	}
-	if err := projectUnused(ctx, run, project); err != nil {
-		return err
-	}
+	return nil
+}
+
+// tlsAndPorts is the rest of install's preflight.
+func tlsAndPorts(c *Config) error {
 	if c.TLS() {
 		for _, f := range []string{"fullchain.pem", "privkey.pem"} {
 			if _, err := os.Stat(filepath.Join(c.TLSDir, f)); err != nil {

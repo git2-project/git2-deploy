@@ -2,7 +2,7 @@
 
 `git2ctl` installs git2 on one Linux or macOS host with Docker (WBS-13.2, UC-01, FR-77). Source: `cmd/git2ctl`, `internal/git2ctl`.
 
-**Status:** `install` works (W3). `upgrade` (FR-78) follows in W4, `restore` (FR-75) in W7–W8.
+**Status:** `install` (W3) and `upgrade` (FR-78, W4) work. `restore` (FR-75) follows in W7–W8.
 
 ## install
 
@@ -43,6 +43,33 @@ If the stack does not become ready in `--timeout` (8 minutes by default; the clo
 | `--git2-src`, `--codeplane-src` | GitHub: git2 `dev/main`, git2-codeplane tag `v0.2.0` | Sources to build from, until images are published (WBS-13.4). git-svc is pinned to the tag git2 pins in `contracts/git/README.md`, so an install gets a known git-svc; `upgrade` moves it to the next tag. A local checkout works too. |
 | `--timeout` | `8m` | How long to wait for git2 to answer. |
 
+## upgrade
+
+```sh
+# Move git-svc to a newer tag; git2.yaml keeps the new source
+sudo ./git2ctl upgrade --codeplane-src https://github.com/git2-project/git2-codeplane.git#v0.3.0
+
+# Same sources, newer Compose files from a newer git2ctl
+sudo ./git2ctl upgrade
+```
+
+What it does, in order (FR-78):
+
+1. **Reads** `git2.yaml` from `--dir`. No file: it says to run `install`. An unknown key, another format `version` or missing secrets are refused, and nothing is written: a rewrite would drop the key, and new secrets would lock the instance out of its PostgreSQL volume.
+2. **Checks** Docker and Compose as install does (no port or project checks: the instance is running).
+3. **Writes** the new sources (only those given) into `git2.yaml`, and the Compose files and `.env` from this git2ctl and that config. The secrets stay the same.
+4. **Starts** `docker compose up -d --build --remove-orphans`: changed images are rebuilt, `migrate` runs again before git2 core starts, and services the stack no longer has are removed. Volumes are kept.
+5. **Waits** until git2 answers, as install does, and leaves the containers running for their logs if it does not.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--dir` | `/opt/git2` | Install directory with `git2.yaml`. |
+| `--project` | `git2` | Compose project name, as at install. |
+| `--git2-src`, `--codeplane-src` | keep | Move a source, for example to a newer tag. |
+| `--timeout` | `8m` | How long to wait for git2 to answer. |
+
+Downgrades are not checked: an older source with newer migrations already applied is the operator's call. Take a snapshot first (FR-70, from W5).
+
 ## git2.yaml
 
 The one file an operator keeps (FR-70 backs it up with the instance):
@@ -66,6 +93,5 @@ secrets:
 
 ## Not yet
 
-- `upgrade` (W4): re-render `.env` from `git2.yaml`, pull or build the new images, run migrations, restart.
 - Images from GHCR instead of a local build (WBS-13.4). The first install builds for a few minutes; later ones reuse Docker's cache.
 - Certificate renewal: copy the new files into `tls_dir` and restart the gateway (ACME is open, git2-deploy#16).
