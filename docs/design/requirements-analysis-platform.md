@@ -139,7 +139,8 @@ sequenceDiagram
     participant GW as Gateway
     Op->>C: install --url https://host --tls-dir dir
     C->>D: docker info, compose version
-    C->>C: no git2.yaml yet, TLS files, ports free
+    C->>D: containers or volumes of the Compose project?
+    C->>C: no git2.yaml yet, no old project data, TLS files, ports free
     alt a check fails
         C-->>Op: names the prerequisite; nothing written
     else
@@ -194,6 +195,7 @@ At most one snapshot is `PENDING` or `RUNNING` (a second `CreateSnapshot` gets `
 | 4 | The per-username failure limit lets anyone lock an owner out of Git for 10 minutes. | Residual on git2#24 for the team to decide; keying it on (username, IP) removes it but weakens the limit. |
 | 5 | Without TLS the gateway serves plain HTTP. | Allowed only on loopback: git2ctl refuses a plain-HTTP URL for any other host (NFR-04). |
 | 6 | NFR-15 (install under 10 min) cannot be met by building from source on a slow host. | Published images (WBS-13.4, W8) make install a pull; measured on a clean VM then. |
+| 7 | A reinstall after removing the install directory meets the old Compose volumes, which live in Docker. PostgreSQL keeps the password its volume was created with, so the new install's fresh secrets can never sign in (found in review of git2-deploy#18). | git2ctl's preflight refuses a Compose project that still has containers or volumes and names `docker compose -p <project> down -v` or another `--project`. Reproduced and fixed on Docker 29.8.2. |
 
 ## 5. Traceability to tests
 
@@ -203,7 +205,7 @@ At most one snapshot is `PENDING` or `RUNNING` (a second `CreateSnapshot` gets `
 | FR-03 | gateway tests: no, expired, revoked, tampered token; dot-segment and encoded paths |
 | FR-27 (via gateway) | smoke check 9: real git push and clone; 401 with challenge; 404 for another owner |
 | NFR-04 | smoke check 10: HTTPS with HSTS, TLS 1.1 refused, HTTP 308; git2ctl refuses plain HTTP off loopback |
-| FR-77 | git2ctl tests (preflight, files, compose arguments) and the real install run in git2-deploy#18 |
+| FR-77 | git2ctl tests (preflight incl. leftover project data, files, compose arguments) and the real install run in git2-deploy#18 (git-svc built from git2-codeplane `v0.2.0`; `/readyz` 200) |
 | FR-70 to FR-76, FR-100 | backup-svc and restore tests from W4 (weekly restore test from W5, NFR-23) |
 
 ## 6. Open
