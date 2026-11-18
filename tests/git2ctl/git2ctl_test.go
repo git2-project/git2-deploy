@@ -1,9 +1,10 @@
-package git2ctl
+package git2ctl_test
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/git2-project/git2-deploy/internal/git2ctl"
 	"io"
 	"net"
 	"net/http"
@@ -74,9 +75,9 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-func plainConfig(t *testing.T) *Config {
+func plainConfig(t *testing.T) *git2ctl.Config {
 	t.Helper()
-	c, err := NewConfig(InstallOptions{ExternalURL: "http://127.0.0.1:" + strconv.Itoa(freePort(t))})
+	c, err := git2ctl.NewConfig(git2ctl.InstallOptions{ExternalURL: "http://127.0.0.1:" + strconv.Itoa(freePort(t))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,43 +95,59 @@ func tlsDir(t *testing.T) string {
 	return d
 }
 
+// bindOf is the host address the gateway listens on, read from the .env
+// git2ctl renders: every interface with TLS, loopback without.
+func bindOf(t *testing.T, c *git2ctl.Config) string {
+	t.Helper()
+	env, err := c.Env()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(env), "\n") {
+		if v, ok := strings.CutPrefix(line, "GIT2_BIND="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 func TestNewConfig(t *testing.T) {
 	tls := tlsDir(t)
 	cases := []struct {
 		name    string
-		o       InstallOptions
+		o       git2ctl.InstallOptions
 		wantErr string
-		check   func(*testing.T, *Config)
+		check   func(*testing.T, *git2ctl.Config)
 	}{
-		{name: "https with TLS", o: InstallOptions{ExternalURL: "https://git.example.test", TLSDir: tls},
-			check: func(t *testing.T, c *Config) {
-				if c.HTTPSPort != 443 || c.HTTPPort != 80 || !c.TLS() || c.bind() != "0.0.0.0" {
-					t.Errorf("ports %d/%d tls %v bind %s", c.HTTPSPort, c.HTTPPort, c.TLS(), c.bind())
+		{name: "https with TLS", o: git2ctl.InstallOptions{ExternalURL: "https://git.example.test", TLSDir: tls},
+			check: func(t *testing.T, c *git2ctl.Config) {
+				if c.HTTPSPort != 443 || c.HTTPPort != 80 || !c.TLS() || bindOf(t, c) != "0.0.0.0" {
+					t.Errorf("ports %d/%d tls %v bind %s", c.HTTPSPort, c.HTTPPort, c.TLS(), bindOf(t, c))
 				}
 			}},
-		{name: "https on another port", o: InstallOptions{ExternalURL: "https://git.example.test:8443/", TLSDir: tls, HTTPPort: 8080},
-			check: func(t *testing.T, c *Config) {
+		{name: "https on another port", o: git2ctl.InstallOptions{ExternalURL: "https://git.example.test:8443/", TLSDir: tls, HTTPPort: 8080},
+			check: func(t *testing.T, c *git2ctl.Config) {
 				if c.HTTPSPort != 8443 || c.HTTPPort != 8080 || c.ExternalURL != "https://git.example.test:8443" {
 					t.Errorf("got %+v", c)
 				}
 			}},
-		{name: "plain HTTP on loopback", o: InstallOptions{ExternalURL: "http://127.0.0.1:8080"},
-			check: func(t *testing.T, c *Config) {
-				if c.HTTPPort != 8080 || c.TLS() || c.bind() != "127.0.0.1" {
+		{name: "plain HTTP on loopback", o: git2ctl.InstallOptions{ExternalURL: "http://127.0.0.1:8080"},
+			check: func(t *testing.T, c *git2ctl.Config) {
+				if c.HTTPPort != 8080 || c.TLS() || bindOf(t, c) != "127.0.0.1" {
 					t.Errorf("got %+v", c)
 				}
 			}},
-		{name: "https without TLS files", o: InstallOptions{ExternalURL: "https://git.example.test"}, wantErr: "--tls-dir"},
-		{name: "plain HTTP for other machines", o: InstallOptions{ExternalURL: "http://git.example.test"}, wantErr: "this machine only"},
-		{name: "plain HTTP on all interfaces", o: InstallOptions{ExternalURL: "http://0.0.0.0:8080"}, wantErr: "this machine only"},
-		{name: "TLS files with plain HTTP", o: InstallOptions{ExternalURL: "http://127.0.0.1", TLSDir: tls}, wantErr: "https URL"},
-		{name: "a path", o: InstallOptions{ExternalURL: "https://git.example.test/git2", TLSDir: tls}, wantErr: "scheme://host"},
-		{name: "another scheme", o: InstallOptions{ExternalURL: "ftp://git.example.test"}, wantErr: "https://"},
-		{name: "bad port", o: InstallOptions{ExternalURL: "https://git.example.test:99999", TLSDir: tls}, wantErr: "port"},
+		{name: "https without TLS files", o: git2ctl.InstallOptions{ExternalURL: "https://git.example.test"}, wantErr: "--tls-dir"},
+		{name: "plain HTTP for other machines", o: git2ctl.InstallOptions{ExternalURL: "http://git.example.test"}, wantErr: "this machine only"},
+		{name: "plain HTTP on all interfaces", o: git2ctl.InstallOptions{ExternalURL: "http://0.0.0.0:8080"}, wantErr: "this machine only"},
+		{name: "TLS files with plain HTTP", o: git2ctl.InstallOptions{ExternalURL: "http://127.0.0.1", TLSDir: tls}, wantErr: "https URL"},
+		{name: "a path", o: git2ctl.InstallOptions{ExternalURL: "https://git.example.test/git2", TLSDir: tls}, wantErr: "scheme://host"},
+		{name: "another scheme", o: git2ctl.InstallOptions{ExternalURL: "ftp://git.example.test"}, wantErr: "https://"},
+		{name: "bad port", o: git2ctl.InstallOptions{ExternalURL: "https://git.example.test:99999", TLSDir: tls}, wantErr: "port"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cfg, err := NewConfig(c.o)
+			cfg, err := git2ctl.NewConfig(c.o)
 			if c.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 					t.Fatalf("err = %v, want one mentioning %q", err, c.wantErr)
@@ -160,7 +177,7 @@ func TestEnvHasTLSSettingsOnlyWithTLS(t *testing.T) {
 	if bytes.Contains(plain, []byte("GIT2_TLS_DIR")) || !bytes.Contains(plain, []byte("GIT2_BIND=127.0.0.1\n")) {
 		t.Errorf("plain env:\n%s", plain)
 	}
-	c, err := NewConfig(InstallOptions{ExternalURL: "https://git.example.test", TLSDir: tlsDir(t)})
+	c, err := git2ctl.NewConfig(git2ctl.InstallOptions{ExternalURL: "https://git.example.test", TLSDir: tlsDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,22 +201,22 @@ func TestPreflightNamesWhatIsMissing(t *testing.T) {
 	cases := []struct {
 		name    string
 		docker  *fakeDocker
-		setup   func(t *testing.T, dir string, c *Config)
+		setup   func(t *testing.T, dir string, c *git2ctl.Config)
 		wantErr string
 	}{
 		{"docker not running", &fakeDocker{infoErr: true}, nil, "Docker daemon is not running"},
 		{"unsupported architecture", &fakeDocker{arch: "s390x", compose: "2.29.1"}, nil, `"s390x" is not supported`},
 		{"compose too old", &fakeDocker{arch: "x86_64", compose: "2.24.3"}, nil, "2.24.3 is too old"},
 		{"compose version unreadable", &fakeDocker{arch: "x86_64", compose: "dev"}, nil, "too old"},
-		{"port taken", okDocker(), func(t *testing.T, _ string, c *Config) {
+		{"port taken", okDocker(), func(t *testing.T, _ string, c *git2ctl.Config) {
 			l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(c.HTTPPort))
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { l.Close() })
 		}, "in use"},
-		{"already installed", okDocker(), func(t *testing.T, dir string, _ *Config) {
-			if err := os.WriteFile(filepath.Join(dir, ConfigFile), []byte("version: 1\n"), 0o600); err != nil {
+		{"already installed", okDocker(), func(t *testing.T, dir string, _ *git2ctl.Config) {
+			if err := os.WriteFile(filepath.Join(dir, git2ctl.ConfigFile), []byte("version: 1\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}, "already installed"},
@@ -214,43 +231,50 @@ func TestPreflightNamesWhatIsMissing(t *testing.T) {
 			if c.setup != nil {
 				c.setup(t, dir, cfg)
 			}
-			err := Preflight(context.Background(), c.docker, dir, "git2", cfg)
+			err := git2ctl.Preflight(context.Background(), c.docker, dir, "git2", cfg)
 			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 				t.Fatalf("err = %v, want one mentioning %q", err, c.wantErr)
 			}
 		})
 	}
-	if err := Preflight(context.Background(), okDocker(), t.TempDir(), "git2", plainConfig(t)); err != nil {
+	if err := git2ctl.Preflight(context.Background(), okDocker(), t.TempDir(), "git2", plainConfig(t)); err != nil {
 		t.Fatalf("a good host failed preflight: %v", err)
 	}
 }
 
 func TestPreflightNeedsTheTLSFiles(t *testing.T) {
 	d := t.TempDir()
-	c, err := NewConfig(InstallOptions{ExternalURL: "https://git.example.test:" + strconv.Itoa(freePort(t)), TLSDir: d, HTTPPort: freePort(t)})
+	c, err := git2ctl.NewConfig(git2ctl.InstallOptions{ExternalURL: "https://git.example.test:" + strconv.Itoa(freePort(t)), TLSDir: d, HTTPPort: freePort(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Preflight(context.Background(), okDocker(), t.TempDir(), "git2", c); err == nil || !strings.Contains(err.Error(), "fullchain.pem") {
+	if err := git2ctl.Preflight(context.Background(), okDocker(), t.TempDir(), "git2", c); err == nil || !strings.Contains(err.Error(), "fullchain.pem") {
 		t.Fatalf("err = %v, want the missing fullchain.pem named", err)
 	}
 }
 
+// Compose 2.24.4 is the oldest that reads compose.tls.yaml's !override.
+// Preflight refuses anything older, or a version it cannot read.
 func TestComposeVersions(t *testing.T) {
-	for v, want := range map[string]bool{
+	for v, ok := range map[string]bool{
 		"2.24.4": true, "2.24.3": false, "2.25.0": true, "v2.29.1-desktop.1": true,
 		"5.5.0": true, "2.24": false, "1.29.2": false, "": false, "x.y.z": false,
 	} {
-		if got := atLeast(v, minCompose); got != want {
-			t.Errorf("atLeast(%q) = %v, want %v", v, got, want)
+		d := &fakeDocker{arch: "x86_64", compose: v}
+		err := git2ctl.Preflight(context.Background(), d, t.TempDir(), "git2", plainConfig(t))
+		if ok != (err == nil) {
+			t.Errorf("compose %q: err = %v, want ok = %v", v, err, ok)
+		}
+		if !ok && (err == nil || !strings.Contains(err.Error(), "too old")) {
+			t.Errorf("compose %q: err = %v, want a too-old error", v, err)
 		}
 	}
 }
 
-func installer(t *testing.T, d *fakeDocker, probe Prober) (*Installer, string) {
+func installer(t *testing.T, d *fakeDocker, probe git2ctl.Prober) (*git2ctl.Installer, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "git2")
-	return &Installer{Dir: dir, Project: "git2-test", Run: d, Out: io.Discard,
+	return &git2ctl.Installer{Dir: dir, Project: "git2-test", Run: d, Out: io.Discard,
 		ReadyTimeout: time.Second, PollEvery: 5 * time.Millisecond, Probe: probe}, dir
 }
 
@@ -268,7 +292,7 @@ func TestInstallWritesPrivateFilesAndStartsCompose(t *testing.T) {
 	if err := in.Install(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]os.FileMode{ConfigFile: 0o600, envFile: 0o600, "compose/compose.yaml": 0o644,
+	for name, want := range map[string]os.FileMode{git2ctl.ConfigFile: 0o600, git2ctl.EnvFile: 0o600, "compose/compose.yaml": 0o644,
 		"compose/compose.tls.yaml": 0o644, "images/gateway/Dockerfile": 0o644} {
 		st, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
@@ -281,9 +305,9 @@ func TestInstallWritesPrivateFilesAndStartsCompose(t *testing.T) {
 	if st, _ := os.Stat(dir); st.Mode().Perm() != 0o700 {
 		t.Errorf("install dir mode %v, want 0700", st.Mode().Perm())
 	}
-	raw, _ := os.ReadFile(filepath.Join(dir, ConfigFile))
-	var back Config
-	if err := yaml.Unmarshal(raw, &back); err != nil || back.Secrets.JWTSecret != c.Secrets.JWTSecret || back.Version != ConfigVersion {
+	raw, _ := os.ReadFile(filepath.Join(dir, git2ctl.ConfigFile))
+	var back git2ctl.Config
+	if err := yaml.Unmarshal(raw, &back); err != nil || back.Secrets.JWTSecret != c.Secrets.JWTSecret || back.Version != git2ctl.ConfigVersion {
 		t.Fatalf("git2.yaml does not read back: %v", err)
 	}
 	up := d.composeCall("up")
@@ -291,7 +315,7 @@ func TestInstallWritesPrivateFilesAndStartsCompose(t *testing.T) {
 		slices.Contains(up, filepath.Join(dir, "compose", "compose.tls.yaml")) {
 		t.Fatalf("compose up = %v", up)
 	}
-	if !slices.Contains(up, "git2-test") || !slices.Contains(up, filepath.Join(dir, envFile)) {
+	if !slices.Contains(up, "git2-test") || !slices.Contains(up, filepath.Join(dir, git2ctl.EnvFile)) {
 		t.Fatalf("compose up does not use the project and the env file: %v", up)
 	}
 }
@@ -303,7 +327,7 @@ func TestInstallWithTLSAndGitSvc(t *testing.T) {
 		probed = append(probed, path)
 		return readyProbe(ctx, path)
 	})
-	c, err := NewConfig(InstallOptions{ExternalURL: "https://git.example.test:" + strconv.Itoa(freePort(t)), TLSDir: tlsDir(t),
+	c, err := git2ctl.NewConfig(git2ctl.InstallOptions{ExternalURL: "https://git.example.test:" + strconv.Itoa(freePort(t)), TLSDir: tlsDir(t),
 		HTTPPort: freePort(t), WithGitSvc: true})
 	if err != nil {
 		t.Fatal(err)
@@ -360,20 +384,26 @@ func TestInstallReportsAFailedStart(t *testing.T) {
 	})
 }
 
+// listenFake answers port checks with a fixed error, through the Listener
+// seam Preflight uses when the Runner implements it.
+type listenFake struct {
+	*fakeDocker
+	err error
+}
+
+func (l listenFake) Listen(string, string) (net.Listener, error) { return nil, l.err }
+
 // A non-root operator cannot bind 443 itself; Docker can. That is not "in use".
 func TestPortCheckIgnoresAPermissionError(t *testing.T) {
-	orig := listenTCP
-	t.Cleanup(func() { listenTCP = orig })
-	listenTCP = func(string, string) (net.Listener, error) {
-		return nil, &net.OpError{Op: "listen", Err: os.NewSyscallError("bind", syscall.EACCES)}
+	bindErr := func(errno syscall.Errno) error {
+		return &net.OpError{Op: "listen", Err: os.NewSyscallError("bind", errno)}
 	}
-	if err := portFree("0.0.0.0", 443); err != nil {
+	c := plainConfig(t)
+	if err := git2ctl.Preflight(context.Background(), listenFake{okDocker(), bindErr(syscall.EACCES)}, t.TempDir(), "git2", c); err != nil {
 		t.Fatalf("permission denied was reported as %v", err)
 	}
-	listenTCP = func(string, string) (net.Listener, error) {
-		return nil, &net.OpError{Op: "listen", Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
-	}
-	if err := portFree("0.0.0.0", 443); err == nil {
-		t.Fatal("a port in use passed")
+	err := git2ctl.Preflight(context.Background(), listenFake{okDocker(), bindErr(syscall.EADDRINUSE)}, t.TempDir(), "git2", c)
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Fatalf("a port in use: err = %v", err)
 	}
 }

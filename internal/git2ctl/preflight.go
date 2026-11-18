@@ -40,6 +40,28 @@ func Preflight(ctx context.Context, run Runner, dir, project string, c *Config) 
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("check %s: %w", dir, err)
 	}
+	if err := checkDocker(ctx, run); err != nil {
+		return err
+	}
+	if err := projectUnused(ctx, run, project); err != nil {
+		return err
+	}
+	listen := net.Listen
+	if l, ok := run.(Listener); ok {
+		listen = l.Listen
+	}
+	return tlsAndPorts(c, listen)
+}
+
+// Listener is implemented by a Runner that also answers port checks. Tests
+// use it to simulate a refused bind; the real host uses net.Listen.
+type Listener interface {
+	Listen(network, address string) (net.Listener, error)
+}
+
+// checkDocker checks that the Docker daemon answers on a supported
+// architecture and that Compose is new enough. Install and upgrade both need it.
+func checkDocker(ctx context.Context, run Runner) error {
 	arch, err := run.Run(ctx, "docker", "info", "--format", "{{.Architecture}}")
 	if err != nil {
 		return fmt.Errorf("the Docker daemon is not running or not reachable (docker info: %s)", firstLine(arch))
@@ -54,9 +76,11 @@ func Preflight(ctx context.Context, run Runner, dir, project string, c *Config) 
 	if v := strings.TrimSpace(string(out)); !atLeast(v, minCompose) {
 		return fmt.Errorf("docker compose %s is too old: git2 needs %d.%d.%d or newer", v, minCompose[0], minCompose[1], minCompose[2])
 	}
-	if err := projectUnused(ctx, run, project); err != nil {
-		return err
-	}
+	return nil
+}
+
+// tlsAndPorts is the rest of install's preflight.
+func tlsAndPorts(c *Config, listen func(network, address string) (net.Listener, error)) error {
 	if c.TLS() {
 		for _, f := range []string{"fullchain.pem", "privkey.pem"} {
 			if _, err := os.Stat(filepath.Join(c.TLSDir, f)); err != nil {
@@ -65,7 +89,7 @@ func Preflight(ctx context.Context, run Runner, dir, project string, c *Config) 
 		}
 	}
 	for _, p := range c.Ports() {
-		if err := portFree(c.bind(), p); err != nil {
+		if err := portFree(listen, c.bind(), p); err != nil {
 			return err
 		}
 	}
@@ -105,15 +129,12 @@ func startOver(project string) string {
 	return fmt.Sprintf("`docker compose -p %s down -v` (this deletes its database and repositories)", project)
 }
 
-// listenTCP is net.Listen; tests replace it to simulate a refused bind.
-var listenTCP = net.Listen
-
 // portFree tries to listen where the gateway will. It is a check, not a
 // reservation: something could still take the port before Compose does.
 // A permission error is not "in use": an operator in the docker group may
 // not bind 80 or 443 itself, but the Docker daemon publishes them for it.
-func portFree(host string, port int) error {
-	l, err := listenTCP("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+func portFree(listen func(network, address string) (net.Listener, error), host string, port int) error {
+	l, err := listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	switch {
 	case errors.Is(err, syscall.EACCES):
 		return nil
