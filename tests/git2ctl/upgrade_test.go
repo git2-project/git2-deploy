@@ -1,8 +1,9 @@
-package git2ctl
+package git2ctl_test
 
 import (
 	"context"
 	"errors"
+	"github.com/git2-project/git2-deploy/internal/git2ctl"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,7 +13,7 @@ import (
 
 // installed runs a real Install against the fake Docker and returns the
 // installer, the directory and the config it wrote.
-func installed(t *testing.T) (*Installer, *fakeDocker, *Config) {
+func installed(t *testing.T) (*git2ctl.Installer, *fakeDocker, *git2ctl.Config) {
 	t.Helper()
 	d := okDocker()
 	in, _ := installer(t, d, readyProbe)
@@ -27,10 +28,10 @@ func installed(t *testing.T) (*Installer, *fakeDocker, *Config) {
 func TestUpgradeKeepsSecretsAndMovesTheSource(t *testing.T) {
 	in, d, before := installed(t)
 	const tag = "https://github.com/git2-project/git2-codeplane.git#v0.3.0"
-	if err := in.Upgrade(context.Background(), UpgradeOptions{CodeplaneSrc: tag}); err != nil {
+	if err := in.Upgrade(context.Background(), git2ctl.UpgradeOptions{CodeplaneSrc: tag}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := LoadConfig(in.Dir)
+	after, err := git2ctl.LoadConfig(in.Dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestUpgradeKeepsSecretsAndMovesTheSource(t *testing.T) {
 	if after.Source.Codeplane != tag || after.Source.Git2 != before.Source.Git2 {
 		t.Fatalf("source = %+v, want codeplane moved to %s and git2 kept", after.Source, tag)
 	}
-	env, err := os.ReadFile(filepath.Join(in.Dir, envFile))
+	env, err := os.ReadFile(filepath.Join(in.Dir, git2ctl.EnvFile))
 	if err != nil || !strings.Contains(string(env), "CODEPLANE_SRC="+tag+"\n") ||
 		!strings.Contains(string(env), "POSTGRES_PASSWORD="+before.Secrets.PostgresPassword+"\n") {
 		t.Fatalf(".env not re-rendered from git2.yaml: %s %v", env, err)
@@ -55,9 +56,9 @@ func TestUpgradeKeepsSecretsAndMovesTheSource(t *testing.T) {
 func TestUpgradeNeedsAnInstall(t *testing.T) {
 	d := okDocker()
 	in, dir := installer(t, d, readyProbe)
-	err := in.Upgrade(context.Background(), UpgradeOptions{})
-	if !errors.Is(err, ErrNotInstalled) || !strings.Contains(err.Error(), "git2ctl install") {
-		t.Fatalf("err = %v, want ErrNotInstalled pointing at install", err)
+	err := in.Upgrade(context.Background(), git2ctl.UpgradeOptions{})
+	if !errors.Is(err, git2ctl.ErrNotInstalled) || !strings.Contains(err.Error(), "git2ctl install") {
+		t.Fatalf("err = %v, want git2ctl.ErrNotInstalled pointing at install", err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("upgrade created the directory")
@@ -77,13 +78,13 @@ func TestUpgradeRefusesAConfigItCannotRead(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			in, d, _ := installed(t)
-			path := filepath.Join(in.Dir, ConfigFile)
+			path := filepath.Join(in.Dir, git2ctl.ConfigFile)
 			raw, _ := os.ReadFile(path)
 			changed := edit(string(raw))
 			if err := os.WriteFile(path, []byte(changed), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := in.Upgrade(context.Background(), UpgradeOptions{}); err == nil {
+			if err := in.Upgrade(context.Background(), git2ctl.UpgradeOptions{}); err == nil {
 				t.Fatal("upgrade accepted the config")
 			}
 			if now, _ := os.ReadFile(path); string(now) != changed {
@@ -99,9 +100,9 @@ func TestUpgradeRefusesAConfigItCannotRead(t *testing.T) {
 func TestUpgradeWritesNothingWithoutDocker(t *testing.T) {
 	in, d, _ := installed(t)
 	d.infoErr = true
-	path := filepath.Join(in.Dir, ConfigFile)
+	path := filepath.Join(in.Dir, git2ctl.ConfigFile)
 	before, _ := os.ReadFile(path)
-	if err := in.Upgrade(context.Background(), UpgradeOptions{Git2Src: "../elsewhere"}); err == nil {
+	if err := in.Upgrade(context.Background(), git2ctl.UpgradeOptions{Git2Src: "../elsewhere"}); err == nil {
 		t.Fatal("upgrade went on without Docker")
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(before) {

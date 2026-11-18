@@ -24,8 +24,9 @@ import (
 // compose.yaml.
 const (
 	ConfigFile = "git2.yaml"
+	// EnvFile is the .env Compose reads, rendered from git2.yaml.
+	EnvFile    = "compose/.env"
 	composeDir = "compose"
-	envFile    = "compose/.env"
 )
 
 // DefaultReadyTimeout starts after `docker compose up -d --build` returns, so
@@ -124,7 +125,7 @@ func (in *Installer) waitReady(ctx context.Context, c *Config, probe Prober) err
 func composeArgs(dir, project string, c *Config) []string {
 	cd := filepath.Join(dir, composeDir)
 	args := []string{"compose", "--project-directory", cd, "-p", project,
-		"--env-file", filepath.Join(dir, envFile), "-f", filepath.Join(cd, "compose.yaml")}
+		"--env-file", filepath.Join(dir, EnvFile), "-f", filepath.Join(cd, "compose.yaml")}
 	if c.TLS() {
 		args = append(args, "-f", filepath.Join(cd, "compose.tls.yaml"))
 	}
@@ -152,7 +153,7 @@ func writeInstall(dir string, c *Config) error {
 	if err := writeStack(dir); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(dir, envFile), env, 0o600); err != nil {
+	if err := writeFile(filepath.Join(dir, EnvFile), env, 0o600); err != nil {
 		return err
 	}
 	// git2.yaml last: its presence is what marks the directory as installed.
