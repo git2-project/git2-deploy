@@ -24,8 +24,9 @@ import (
 // compose.yaml.
 const (
 	ConfigFile = "git2.yaml"
+	// EnvFile is the .env Compose reads, rendered from git2.yaml.
+	EnvFile    = "compose/.env"
 	composeDir = "compose"
-	envFile    = "compose/.env"
 )
 
 // DefaultReadyTimeout starts after `docker compose up -d --build` returns, so
@@ -64,6 +65,16 @@ func (in *Installer) Install(ctx context.Context, c *Config) error {
 	if out, err := in.Run.Run(ctx, "docker", up...); err != nil {
 		return fmt.Errorf("docker compose up failed (see what still runs: docker compose -p %s ps -a): %s", in.Project, tail(out, 20))
 	}
+	if err := in.ready(ctx, c, "running"); err != nil {
+		return err
+	}
+	fmt.Fprintln(in.Out, "Open it to create the first administrator.")
+	return nil
+}
+
+// ready waits until git2 answers and says so. If it does not, it prints
+// `compose ps` and leaves the containers running for their logs (E3).
+func (in *Installer) ready(ctx context.Context, c *Config, state string) error {
 	probe := in.Probe
 	if probe == nil {
 		var err error
@@ -75,7 +86,7 @@ func (in *Installer) Install(ctx context.Context, c *Config) error {
 		ps, _ := in.Run.Run(ctx, "docker", append(composeArgs(in.Dir, in.Project, c), "ps", "-a")...)
 		return fmt.Errorf("%w\n%s\nlogs: docker compose -p %s logs <service>; the containers are left running", err, ps, in.Project)
 	}
-	fmt.Fprintf(in.Out, "git2 is running at %s\nOpen it to create the first administrator.\n", c.ExternalURL)
+	fmt.Fprintf(in.Out, "git2 is %s at %s\n", state, c.ExternalURL)
 	return nil
 }
 
@@ -114,7 +125,7 @@ func (in *Installer) waitReady(ctx context.Context, c *Config, probe Prober) err
 func composeArgs(dir, project string, c *Config) []string {
 	cd := filepath.Join(dir, composeDir)
 	args := []string{"compose", "--project-directory", cd, "-p", project,
-		"--env-file", filepath.Join(dir, envFile), "-f", filepath.Join(cd, "compose.yaml")}
+		"--env-file", filepath.Join(dir, EnvFile), "-f", filepath.Join(cd, "compose.yaml")}
 	if c.TLS() {
 		args = append(args, "-f", filepath.Join(cd, "compose.tls.yaml"))
 	}
@@ -142,7 +153,7 @@ func writeInstall(dir string, c *Config) error {
 	if err := writeStack(dir); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(dir, envFile), env, 0o600); err != nil {
+	if err := writeFile(filepath.Join(dir, EnvFile), env, 0o600); err != nil {
 		return err
 	}
 	// git2.yaml last: its presence is what marks the directory as installed.
