@@ -1,7 +1,8 @@
-# 0004. The gateway is its own process (proposed)
+# 0004. The gateway is its own process
 
-- Status: Proposed, for the W2 sprint planning
-- Date: 2026-10-28
+- Status: Accepted, 2026-11-08
+- Proposed: 2026-10-28
+- Agreed by: Osman (approved git2#21, the gateway, and git2#24, its Git route), Bilge (approved git2#22, the client IP behind the gateway). All three merged into git2 `dev/main` on 7–8 Nov.
 
 ## Context
 
@@ -16,11 +17,11 @@ How others solve it:
 - **GitLab** puts **Workhorse**, a small Go reverse proxy, in front of Rails. It handles Git over HTTP, uploads and long requests itself and passes only short requests on ([GitLab Workhorse docs](https://docs.gitlab.com/development/workhorse/)).
 - **Gitea and Forgejo** serve everything from one binary, with no per-route split of timeouts.
 
-## Decision (proposed)
+## Decision
 
 - The gateway is its own Go process and image (`gateway`), in the git2 repo under `gateway/`, owned by the Platform lane.
   - It reuses `authsvc.RequireAuth` and `internal/` from that module instead of copying them.
-- It applies per-route limits: short timeouts and the body cap on `/api`, and streaming with idle timeouts only on Git routes.
+- It applies per-route limits: a 30 s timeout on `/api` (`gateway.APITimeout`), none on Git routes, which stream. The 64 KiB body cap stays in git2 core, which already enforces it.
 - It strips client-sent `X-Git2-*` headers and sets `X-Git2-User-Id` and `X-Real-IP` for upstreams (see [docs/api/gateway.md](../api/gateway.md)).
 - In Compose and Helm it is the only service with a public port.
 
@@ -29,3 +30,14 @@ How others solve it:
 - Smart HTTP traffic never passes through git2 core's API timeouts.
 - One more image and one more hop, under 1 ms on a local network.
 - git2 core must take the client IP from `X-Real-IP`, but only when the request comes from the gateway. Today `internal/ratelimit` reads `RemoteAddr`, so behind a separate gateway every client would share one rate-limit bucket. An action item for the git2 owners is in the version note of 28 Oct.
+  Done in git2#22: `internal/realip` reads `X-Real-IP` only on connections from `TRUSTED_PROXY_CIDRS`.
+
+## As built (checked 2026-11-18 against git2 `dev/main`)
+
+- `cmd/gateway` and `gateway/` in the git2 repo, image `gateway` built here (ADR 0001). Compose publishes only its port (git2-deploy#14).
+- `/api`: 30 s per request. Git: a 5 s repository lookup, then the stream has no timeout. The server sets `ReadHeaderTimeout` 10 s and `IdleTimeout` 2 min.
+
+## Open
+
+- **A stalled Git stream has no bound.** `IdleTimeout` covers only keep-alive connections waiting for the next request ([net/http `Server`](https://pkg.go.dev/net/http#Server)), not a request in progress. A client that stops reading or sending keeps its connection and the git-svc stream open. Fix: an idle deadline per Git request that is pushed forward on every read and write, with [`http.ResponseController`](https://pkg.go.dev/net/http#ResponseController) `SetReadDeadline` / `SetWriteDeadline` (Go 1.20+). Tracked in git2-deploy#27.
+
