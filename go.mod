@@ -6,6 +6,7 @@ require (
 	filippo.io/age v1.3.2
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.4
+	go.yaml.in/yaml/v3 v3.0.4
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
